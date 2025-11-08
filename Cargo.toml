@@ -1,0 +1,23 @@
+[package]
+name = "minitimer"
+version = "0.1.0"
+authors = ["Curricane <curricane@163.com>"]
+edition = "2024"
+repository = "https://github.com/Curricane/minitimer"
+description = "A mini timer of delayed tasks. Only asynchronous tasks are possible on tokio runtime, and dynamic add/cancel/remove is supported."
+keywords = [ "scheduler", "timer", "delay", "tokio"]
+license = "Apache-2.0 OR MIT"
+categories = ["development-tools", "data-structures", "asynchronous", "data-structures", "accessibility"]
+
+
+[lib]
+name = "minitimer"
+
+[dependencies]
+anyhow = "1.0.100"
+async-channel = "2.5.0"
+async-trait = "0.1.89"
+log = "0.4.28"
+thiserror = "2.0.17"
+tokio = { version = "1.48.0", features = ["full"] }
+tracing = "0.1.41"
