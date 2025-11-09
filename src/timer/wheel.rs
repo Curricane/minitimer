@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use dashmap::DashMap;
@@ -31,7 +34,6 @@ impl MulitWheel {
     }
 
     /// Get the current positions of all wheels for testing purposes
-    #[cfg(test)]
     pub(crate) fn get_wheel_positions(&self) -> (u64, u64, u64) {
         (
             self.sec_wheel.hand.load(Ordering::Relaxed),
@@ -40,20 +42,48 @@ impl MulitWheel {
         )
     }
 
-    pub(crate) fn move_second_hand(&self) {
-        let need_move = self.sec_wheel.hand_move();
-        if need_move {
-            let need_move = self.min_wheel.hand_move();
-            if need_move {
-                self.hour_wheel.hand_move();
+    fn cascade_minute_tasks(&self) {
+        let hand = self.min_wheel.hand.load(Ordering::Relaxed);
+        let slot = self.min_wheel.slots.remove(&hand);
+        if let Some((_, slot)) = slot {
+            for task in slot.task_map.into_values() {
+                let slot_num = task.wheel_position.sec;
+                self.sec_wheel.add_task(task, slot_num);
             }
         }
+        self.min_wheel.slots.insert(hand, Slot::new());
+    }
+
+    fn cascade_hour_tasks(&self) {
+        let hand = self.hour_wheel.hand.load(Ordering::Relaxed);
+        let slot = self.hour_wheel.slots.remove(&hand);
+        let mut new_slot = Slot::new();
+        if let Some((_, slot)) = slot {
+            for mut task in slot.task_map.into_values() {
+                let round = task.wheel_position.round;
+                if round > 0 {
+                    task.wheel_position.round.saturating_sub(1);
+                    new_slot.add_task(task);
+                    continue;
+                } else {
+                    task.wheel_position.round -= 1;
+                    let slot_num = task.wheel_position.min.unwrap();
+                    self.min_wheel.add_task(task, slot_num);
+                }
+            }
+        }
+        self.hour_wheel.slots.insert(hand, new_slot);
+    }
+
+    pub(crate) fn tick(&self) -> Option<u64> {
+        self.sec_wheel
+            .hand_move(1)
+            .and_then(|carry| self.min_wheel.hand_move(carry))
+            .and_then(|carry| self.hour_wheel.hand_move(carry))
     }
 
     pub(crate) fn cal_next_hand_position(&self, next_alarm_sec: u64) -> MultiWheelPosition {
-        let current_second = self.sec_wheel.hand.load(Ordering::Relaxed);
-        let current_minute = self.min_wheel.hand.load(Ordering::Relaxed);
-        let current_hour = self.hour_wheel.hand.load(Ordering::Relaxed);
+        let (current_second, current_minute, current_hour) = self.get_wheel_positions();
 
         let total_seconds = current_second + next_alarm_sec;
         let final_sec = total_seconds % 60;
@@ -63,11 +93,11 @@ impl MulitWheel {
 
         // Check if there will be a carry from seconds to minutes
         let has_min_carry = total_seconds >= 60;
-        
+
         if has_min_carry {
             // Check if there will be a carry from minutes to hours
             let has_hour_carry = total_minutes >= 60;
-            
+
             if has_hour_carry {
                 // There will be carry to hours, we need to calculate rounds as well
                 let total_hours = current_hour + (total_minutes / 60);
@@ -144,14 +174,22 @@ impl Wheel {
     }
 
     /// Move the hand to the next slot.
-    /// Returns true if the hand moves to the beginning of the wheel.
-    pub(crate) fn hand_move(&self) -> bool {
-        let pre_hand = self.hand.fetch_add(1, Ordering::Relaxed);
-        if pre_hand == (self.num_slots - 1) {
-            self.hand.store(0, Ordering::Relaxed);
-            true
+    /// Returns the carry amount.
+    pub(crate) fn hand_move(&self, step: u64) -> Option<u64> {
+        if step == 0 {
+            return None;
+        }
+        let pre_hand = self.hand.fetch_add(step, Ordering::Relaxed);
+        let new_hand = pre_hand + step;
+        let carry = new_hand / self.num_slots;
+
+        if carry > 0 {
+            // Reset the hand to the correct position after carry
+            self.hand
+                .store(new_hand % self.num_slots, Ordering::Relaxed);
+            Some(carry)
         } else {
-            false
+            None
         }
     }
 
