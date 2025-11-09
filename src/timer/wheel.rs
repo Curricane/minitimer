@@ -22,6 +22,24 @@ impl MulitWheel {
         }
     }
 
+    /// Set the positions of all wheels for testing purposes
+    #[cfg(test)]
+    pub(crate) fn set_wheel_positions(&self, sec: u64, min: u64, hour: u64) {
+        self.sec_wheel.set_hand_position(sec);
+        self.min_wheel.set_hand_position(min);
+        self.hour_wheel.set_hand_position(hour);
+    }
+
+    /// Get the current positions of all wheels for testing purposes
+    #[cfg(test)]
+    pub(crate) fn get_wheel_positions(&self) -> (u64, u64, u64) {
+        (
+            self.sec_wheel.hand.load(Ordering::Relaxed),
+            self.min_wheel.hand.load(Ordering::Relaxed),
+            self.hour_wheel.hand.load(Ordering::Relaxed),
+        )
+    }
+
     pub(crate) fn move_second_hand(&self) {
         let need_move = self.sec_wheel.hand_move();
         if need_move {
@@ -37,30 +55,21 @@ impl MulitWheel {
         let current_minute = self.min_wheel.hand.load(Ordering::Relaxed);
         let current_hour = self.hour_wheel.hand.load(Ordering::Relaxed);
 
-        if next_alarm_sec < 60 {
-            MultiWheelPosition {
-                sec: (current_second + next_alarm_sec) % 60,
-                min: None,
-                hour: None,
-                round: 0,
-            }
-        } else {
-            let total_seconds = current_second + next_alarm_sec;
-            let final_sec = total_seconds % 60;
+        let total_seconds = current_second + next_alarm_sec;
+        let final_sec = total_seconds % 60;
 
-            let total_minutes = current_minute + (total_seconds / 60);
-            let final_min = total_minutes % 60;
+        let total_minutes = current_minute + (total_seconds / 60);
+        let final_min = total_minutes % 60;
 
-            if next_alarm_sec < 3600 && total_minutes < 60 {
-                // one hour to one day, and no minute carry to hour
-                MultiWheelPosition {
-                    sec: final_sec,
-                    min: Some(final_min),
-                    hour: None,
-                    round: 0,
-                }
-            } else {
-                // one day to more day, or minute carry to hour
+        // Check if there will be a carry from seconds to minutes
+        let has_min_carry = total_seconds >= 60;
+        
+        if has_min_carry {
+            // Check if there will be a carry from minutes to hours
+            let has_hour_carry = total_minutes >= 60;
+            
+            if has_hour_carry {
+                // There will be carry to hours, we need to calculate rounds as well
                 let total_hours = current_hour + (total_minutes / 60);
                 let final_hour = total_hours % 24;
                 let round = total_hours / 24;
@@ -71,6 +80,22 @@ impl MulitWheel {
                     hour: Some(final_hour),
                     round,
                 }
+            } else {
+                // Only minute carry, no hour carry
+                MultiWheelPosition {
+                    sec: final_sec,
+                    min: Some(final_min),
+                    hour: None,
+                    round: 0,
+                }
+            }
+        } else {
+            // No carry, only seconds level
+            MultiWheelPosition {
+                sec: final_sec,
+                min: None,
+                hour: None,
+                round: 0,
             }
         }
     }
@@ -130,6 +155,13 @@ impl Wheel {
         }
     }
 
+    /// Set the hand position of the wheel for testing purposes
+    #[cfg(test)]
+    pub(crate) fn set_hand_position(&self, position: u64) {
+        self.hand
+            .store(position % self.num_slots, Ordering::Relaxed);
+    }
+
     pub(crate) fn add_task(&self, task: Task, slot_num: u64) {
         self.slots.get_mut(&slot_num).unwrap().add_task(task);
     }
@@ -146,5 +178,98 @@ pub(crate) struct MultiWheelPosition {
 impl MultiWheelPosition {
     pub(crate) fn is_arrived(&self) -> bool {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cal_next_hand_position_no_carry() {
+        let wheel = MulitWheel::new();
+        // 10:20:30
+        wheel.set_wheel_positions(30, 20, 10);
+
+        let pos = wheel.cal_next_hand_position(5);
+        assert_eq!(pos.sec, 35);
+        assert_eq!(pos.min, None);
+        assert_eq!(pos.hour, None);
+        assert_eq!(pos.round, 0);
+    }
+
+    #[test]
+    fn test_cal_next_hand_position_second_carry() {
+        let wheel = MulitWheel::new();
+        // 10:20:58
+        wheel.set_wheel_positions(58, 20, 10);
+
+        // (58 + 5 = 63 => 3 seconds, 21 minutes)
+        let pos = wheel.cal_next_hand_position(5);
+        assert_eq!(pos.sec, 3);
+        assert_eq!(pos.min, Some(21));
+        assert_eq!(pos.hour, None);
+        assert_eq!(pos.round, 0);
+    }
+
+    #[test]
+    fn test_cal_next_hand_position_minute_carry() {
+        let wheel = MulitWheel::new();
+        // 10:59:50
+        wheel.set_wheel_positions(50, 59, 10);
+
+        // (50 + 20 = 70 => 10 seconds, 60 minutes => 0 minutes, 11 hours)
+        let pos = wheel.cal_next_hand_position(20);
+        assert_eq!(pos.sec, 10);
+        assert_eq!(pos.min, Some(0));
+        assert_eq!(pos.hour, Some(11));
+        assert_eq!(pos.round, 0);
+    }
+
+    #[test]
+    fn test_cal_next_hand_position_hour_carry() {
+        let wheel = MulitWheel::new();
+        // 23:59:55
+        wheel.set_wheel_positions(55, 59, 23);
+
+        // (55 + 10 = 65 => 5 seconds, 60 minutes => 0 minutes, 24 hours => 0 hours, 1 round)
+        let pos = wheel.cal_next_hand_position(10);
+        assert_eq!(pos.sec, 5);
+        assert_eq!(pos.min, Some(0));
+        assert_eq!(pos.hour, Some(0));
+        assert_eq!(pos.round, 1);
+    }
+
+    #[test]
+    fn test_cal_next_hand_position_large_interval() {
+        let wheel = MulitWheel::new();
+        // 10:30:40
+        wheel.set_wheel_positions(40, 30, 10);
+
+        // 7200 sec => 2 hours
+        let pos = wheel.cal_next_hand_position(7200);
+        assert_eq!(pos.sec, 40);
+        assert_eq!(pos.min, Some(30));
+        assert_eq!(pos.hour, Some(12));
+        assert_eq!(pos.round, 0);
+    }
+
+    #[test]
+    fn test_cal_next_hand_position_exceed_one_day() {
+        let wheel = MulitWheel::new();
+        // 20:30:40
+        wheel.set_wheel_positions(40, 30, 20);
+
+        // 100000 sec => 27.8 hours
+        let pos = wheel.cal_next_hand_position(100000);
+        // 40 + 100000 = 100040 seconds
+        // 100040 % 60 = 20 seconds
+        // (30 + 100040/60) % 60 = (30 + 1667) % 60 = 1697 % 60 = 17 minutes
+        // (20 + 1697/60) % 24 = (20 + 28) % 24 = 48 % 24 = 0 hours
+        // 48 / 24 = 2 rounds
+        assert_eq!(pos.sec, 20);
+        assert_eq!(pos.min, Some(17));
+        assert_eq!(pos.hour, Some(0));
+        assert_eq!(pos.round, 2);
     }
 }
