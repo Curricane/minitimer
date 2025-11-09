@@ -1,9 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 use dashmap::DashMap;
@@ -42,7 +39,7 @@ impl MulitWheel {
         )
     }
 
-    fn cascade_minute_tasks(&self) {
+    pub(crate) fn cascade_minute_tasks(&self) {
         let hand = self.min_wheel.hand.load(Ordering::Relaxed);
         let slot = self.min_wheel.slots.remove(&hand);
         if let Some((_, slot)) = slot {
@@ -54,7 +51,7 @@ impl MulitWheel {
         self.min_wheel.slots.insert(hand, Slot::new());
     }
 
-    fn cascade_hour_tasks(&self) {
+    pub(crate) fn cascade_hour_tasks(&self) {
         let hand = self.hour_wheel.hand.load(Ordering::Relaxed);
         let slot = self.hour_wheel.slots.remove(&hand);
         let mut new_slot = Slot::new();
@@ -62,11 +59,10 @@ impl MulitWheel {
             for mut task in slot.task_map.into_values() {
                 let round = task.wheel_position.round;
                 if round > 0 {
-                    task.wheel_position.round.saturating_sub(1);
+                    task.wheel_position.round = task.wheel_position.round.saturating_sub(1);
                     new_slot.add_task(task);
                     continue;
                 } else {
-                    task.wheel_position.round -= 1;
                     let slot_num = task.wheel_position.min.unwrap();
                     self.min_wheel.add_task(task, slot_num);
                 }
@@ -79,12 +75,14 @@ impl MulitWheel {
         self.sec_wheel
             .hand_move(1)
             .and_then(|carry| {
+                let carry = self.min_wheel.hand_move(carry);
                 self.cascade_minute_tasks();
-                self.min_wheel.hand_move(carry)
+                carry
             })
             .and_then(|carry| {
+                let carry = self.hour_wheel.hand_move(carry);
                 self.cascade_hour_tasks();
-                self.hour_wheel.hand_move(carry)
+                carry
             })
     }
 
@@ -186,6 +184,7 @@ impl Wheel {
             return None;
         }
         let pre_hand = self.hand.fetch_add(step, Ordering::Relaxed);
+        println!("pre_hand: {}", pre_hand);
         let new_hand = pre_hand + step;
         let carry = new_hand / self.num_slots;
 
@@ -197,6 +196,10 @@ impl Wheel {
         } else {
             None
         }
+    }
+
+    pub(crate) fn hand_position(&self) -> u64 {
+        self.hand.load(Ordering::Relaxed)
     }
 
     /// Set the hand position of the wheel for testing purposes
@@ -228,6 +231,32 @@ impl MultiWheelPosition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task::{TaskBuilder, TaskRunner};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // 简单的测试任务运行器
+    struct TestTaskRunner {
+        execution_count: Arc<AtomicU64>,
+    }
+
+    impl TestTaskRunner {
+        fn new() -> Self {
+            Self {
+                execution_count: Arc::new(AtomicU64::new(0)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TaskRunner for TestTaskRunner {
+        type Output = ();
+
+        async fn run(&self) -> Result<Self::Output, Box<dyn std::error::Error + Send + Sync>> {
+            self.execution_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
 
     #[test]
     fn test_cal_next_hand_position_no_carry() {
@@ -315,5 +344,95 @@ mod tests {
         assert_eq!(pos.min, Some(17));
         assert_eq!(pos.hour, Some(0));
         assert_eq!(pos.round, 2);
+    }
+
+    #[test]
+    fn test_tick_without_cascade() {
+        let multi_wheel = MulitWheel::new();
+
+        // Test tick without any cascade (no carry-over between wheels)
+        // This verifies that the second wheel moves normally without triggering minute or hour cascades
+        let result = multi_wheel.tick();
+        assert_eq!(result, None);
+        assert_eq!(multi_wheel.sec_wheel.hand_position(), 1);
+
+        // Test another tick to ensure continuous movement
+        let result = multi_wheel.tick();
+        assert_eq!(result, None);
+        assert_eq!(multi_wheel.sec_wheel.hand_position(), 2);
+    }
+
+    #[test]
+    fn test_tick_with_minute_cascade() {
+        let multi_wheel = MulitWheel::new();
+
+        // Add a task to minute wheel slot 0
+        let task = TaskBuilder::new(1)
+            .with_frequency_once_by_seconds(60)
+            .spwan_async(TestTaskRunner::new())
+            .unwrap();
+        multi_wheel.min_wheel.add_task(task, 0);
+
+        // Set second wheel hand position to 59 (last second of a minute)
+        // This will trigger a cascade to the minute wheel on the next tick
+        multi_wheel.sec_wheel.set_hand_position(59);
+
+        // Execute tick which should trigger minute cascade
+        // The task should be moved from minute wheel to second wheel for execution
+        multi_wheel.tick();
+
+        // Verify that the task is no longer in the minute wheel slot 0
+        // It should have been cascaded down to the second wheel for execution
+        assert!(
+            !multi_wheel
+                .sec_wheel
+                .slots
+                .get(&0)
+                .unwrap()
+                .task_map
+                .contains_key(&1)
+        );
+    }
+
+    #[test]
+    fn test_tick_with_hour_cascade() {
+        let multi_wheel = MulitWheel::new();
+
+        // Set both second and minute wheels to their maximum positions (59)
+        // This creates a scenario where both seconds and minutes will cascade
+        multi_wheel.sec_wheel.set_hand_position(59);
+        multi_wheel.min_wheel.set_hand_position(59);
+
+        // Add a task to hour wheel slot 0 (last hour of the day)
+        let mut task = TaskBuilder::new(2)
+            .with_frequency_once_by_seconds(3600)
+            .spwan_async(TestTaskRunner::new())
+            .unwrap();
+
+        // Set the task's wheel position to simulate it being at the end of the day
+        // (59 seconds, 59 minutes, 23 hours)
+        task.set_wheel_position(MultiWheelPosition {
+            sec: 59,
+            min: Some(59),
+            hour: Some(23),
+            round: 0,
+        });
+        multi_wheel.hour_wheel.add_task(task, 0);
+
+        // Execute tick which should trigger hour cascade
+        // The task should be moved from hour wheel to minute wheel
+        multi_wheel.tick();
+
+        // Verify that the task is no longer in the minute wheel slot 0
+        // It should have been cascaded down from the hour wheel
+        assert!(
+            !multi_wheel
+                .min_wheel
+                .slots
+                .get(&0)
+                .unwrap()
+                .task_map
+                .contains_key(&2)
+        );
     }
 }

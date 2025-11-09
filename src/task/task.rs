@@ -12,6 +12,7 @@ use crate::{
     utils,
 };
 
+#[derive(Clone)]
 pub struct Task {
     /// The unique identifier for the task.
     pub task_id: TaskId,
@@ -33,9 +34,13 @@ impl Task {
     pub fn next_alarm_timestamp(&mut self) -> Option<u64> {
         self.frequency.next_alarm_timestamp()
     }
+
+    pub(crate) fn set_wheel_position(&mut self, wheel_position: MultiWheelPosition) {
+        self.wheel_position = wheel_position;
+    }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct TaskBuilder {
     task_id: TaskId,
     frequency: FrequencySeconds,

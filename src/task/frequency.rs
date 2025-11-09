@@ -7,6 +7,8 @@ use crate::utils::timestamp;
 
 pub(crate) type SecondsState = Peekable<StepBy<RangeFrom<u64>>>;
 const ONE_MINUTE: u64 = 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrequencySeconds {
     Once(u64),
     Repeated(u64),
@@ -19,6 +21,7 @@ impl Default for FrequencySeconds {
     }
 }
 
+#[derive(Clone)]
 pub(crate) enum FrequencyState {
     SecondsRepeated(SecondsState),
     SecondsCountDown(u64, SecondsState),
