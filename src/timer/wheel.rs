@@ -78,8 +78,14 @@ impl MulitWheel {
     pub(crate) fn tick(&self) -> Option<u64> {
         self.sec_wheel
             .hand_move(1)
-            .and_then(|carry| self.min_wheel.hand_move(carry))
-            .and_then(|carry| self.hour_wheel.hand_move(carry))
+            .and_then(|carry| {
+                self.cascade_minute_tasks();
+                self.min_wheel.hand_move(carry)
+            })
+            .and_then(|carry| {
+                self.cascade_hour_tasks();
+                self.hour_wheel.hand_move(carry)
+            })
     }
 
     pub(crate) fn cal_next_hand_position(&self, next_alarm_sec: u64) -> MultiWheelPosition {
