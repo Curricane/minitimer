@@ -49,21 +49,21 @@ impl From<FrequencySeconds> for FrequencyState {
 }
 
 impl FrequencyState {
-    fn peek_alarm_timestamp(&mut self) -> Option<i64> {
+    pub(crate) fn peek_alarm_timestamp(&mut self) -> Option<u64> {
         match self {
-            Self::SecondsRepeated(state) => state.peek().map(|t| *t as i64),
-            Self::SecondsCountDown(_, state) => state.peek().map(|t| *t as i64),
+            Self::SecondsRepeated(state) => state.peek().map(|t| *t),
+            Self::SecondsCountDown(_, state) => state.peek().map(|t| *t),
         }
     }
 
-    fn next_alarm_timestamp(&mut self) -> Option<i64> {
+    pub(crate) fn next_alarm_timestamp(&mut self) -> Option<u64> {
         match self {
-            Self::SecondsRepeated(state) => state.next().map(|t| t as i64),
-            Self::SecondsCountDown(_, state) => state.next().map(|t| t as i64),
+            Self::SecondsRepeated(state) => state.next(),
+            Self::SecondsCountDown(_, state) => state.next(),
         }
     }
 
-    fn down_count(&mut self) {
+    pub(crate) fn down_count(&mut self) {
         if let Self::SecondsCountDown(count, _) = self {
             *count = count.saturating_sub(1);
         }
@@ -82,7 +82,7 @@ mod tests {
         // For Once, we should get a timestamp in the future
         let now = crate::utils::timestamp();
         let alarm = state.peek_alarm_timestamp().unwrap();
-        assert!(alarm >= now as i64 + 10);
+        assert!(alarm >= now + 10);
 
         // Next call should give the same timestamp (peek doesn't advance)
         let alarm2 = state.peek_alarm_timestamp().unwrap();
