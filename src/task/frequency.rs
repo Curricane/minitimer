@@ -36,12 +36,16 @@ impl From<FrequencySeconds> for FrequencyState {
             }
             FrequencySeconds::Repeated(seconds) => {
                 assert!(seconds > 0, "repeated frequency must be greater than 0");
-                let state: SecondsState = (0..).step_by(seconds as usize).peekable();
+                let state: SecondsState = ((timestamp() + seconds)..)
+                    .step_by(seconds as usize)
+                    .peekable();
                 FrequencyState::SecondsRepeated(state)
             }
             FrequencySeconds::CountDown(count_down, seconds) => {
                 assert!(seconds > 0, "countdown initial must be greater than 0");
-                let state: SecondsState = (seconds..).step_by(count_down as usize).peekable();
+                let state: SecondsState = (timestamp() + seconds..)
+                    .step_by(count_down as usize)
+                    .peekable();
                 FrequencyState::SecondsCountDown(count_down, state)
             }
         }
@@ -98,15 +102,16 @@ mod tests {
         let freq = FrequencySeconds::Repeated(5);
         let mut state = FrequencyState::from(freq);
 
+        let now = crate::utils::timestamp();
         // For Repeated, we should get a sequence starting from 0 with step 5
         let alarm1 = state.next_alarm_timestamp().unwrap();
-        assert_eq!(alarm1, 0);
+        assert_eq!(alarm1, now + 5);
 
         let alarm2 = state.next_alarm_timestamp().unwrap();
-        assert_eq!(alarm2, 5);
+        assert_eq!(alarm2, now + 10);
 
         let alarm3 = state.next_alarm_timestamp().unwrap();
-        assert_eq!(alarm3, 10);
+        assert_eq!(alarm3, now + 15);
     }
 
     #[test]

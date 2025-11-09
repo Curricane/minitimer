@@ -29,8 +29,9 @@ impl Task {
         self.wheel_position.is_arrived()
     }
 
-    pub fn get_next_alarm_timestamp(&mut self) -> Option<u64> {
-        self.frequency.peek_alarm_timestamp()
+    /// Get the next alarm timestamp of the task and update the frequency state to next.
+    pub fn next_alarm_timestamp(&mut self) -> Option<u64> {
+        self.frequency.next_alarm_timestamp()
     }
 }
 

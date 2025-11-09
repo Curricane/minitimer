@@ -101,7 +101,7 @@ impl MulitWheel {
     }
 
     pub(crate) fn add_task(&self, mut task: Task) -> Result<(), TaskError> {
-        let next_exec_timestamp = match task.get_next_alarm_timestamp() {
+        let next_exec_timestamp = match task.next_alarm_timestamp() {
             Some(t) => t,
             None => return Ok(()),
         };
