@@ -44,7 +44,7 @@ impl MulitWheel {
         let slot = self.min_wheel.slots.remove(&hand);
         if let Some((_, slot)) = slot {
             for task in slot.task_map.into_values() {
-                let slot_num = task.wheel_position.sec;
+                let slot_num = task.cascade_guide.sec;
                 self.sec_wheel.add_task(task, slot_num);
             }
         }
@@ -57,13 +57,13 @@ impl MulitWheel {
         let mut new_slot = Slot::new();
         if let Some((_, slot)) = slot {
             for mut task in slot.task_map.into_values() {
-                let round = task.wheel_position.round;
+                let round = task.cascade_guide.round;
                 if round > 0 {
-                    task.wheel_position.round = task.wheel_position.round.saturating_sub(1);
+                    task.cascade_guide.round = task.cascade_guide.round.saturating_sub(1);
                     new_slot.add_task(task);
                     continue;
                 } else {
-                    let slot_num = task.wheel_position.min.unwrap();
+                    let slot_num = task.cascade_guide.min.unwrap();
                     self.min_wheel.add_task(task, slot_num);
                 }
             }
@@ -86,7 +86,7 @@ impl MulitWheel {
             })
     }
 
-    pub(crate) fn cal_next_hand_position(&self, next_alarm_sec: u64) -> MultiWheelPosition {
+    pub(crate) fn cal_next_hand_position(&self, next_alarm_sec: u64) -> WheelCascadeGuide {
         let (current_second, current_minute, current_hour) = self.get_wheel_positions();
 
         let total_seconds = current_second + next_alarm_sec;
@@ -108,7 +108,7 @@ impl MulitWheel {
                 let final_hour = total_hours % 24;
                 let round = total_hours / 24;
 
-                MultiWheelPosition {
+                WheelCascadeGuide {
                     sec: final_sec,
                     min: Some(final_min),
                     hour: Some(final_hour),
@@ -116,7 +116,7 @@ impl MulitWheel {
                 }
             } else {
                 // Only minute carry, no hour carry
-                MultiWheelPosition {
+                WheelCascadeGuide {
                     sec: final_sec,
                     min: Some(final_min),
                     hour: None,
@@ -125,7 +125,7 @@ impl MulitWheel {
             }
         } else {
             // No carry, only seconds level
-            MultiWheelPosition {
+            WheelCascadeGuide {
                 sec: final_sec,
                 min: None,
                 hour: None,
@@ -143,7 +143,7 @@ impl MulitWheel {
         let next_alarm_sec = next_exec_timestamp - timestamp();
 
         let next_pos = self.cal_next_hand_position(next_alarm_sec);
-        task.wheel_position = next_pos;
+        task.cascade_guide = next_pos;
 
         if let Some(hand) = next_pos.hour {
             self.hour_wheel.add_task(task, hand);
@@ -215,14 +215,14 @@ impl Wheel {
 }
 
 #[derive(Debug, Default, Copy, Clone)]
-pub(crate) struct MultiWheelPosition {
+pub(crate) struct WheelCascadeGuide {
     pub sec: u64,
     pub min: Option<u64>,
     pub hour: Option<u64>,
     pub round: u64,
 }
 
-impl MultiWheelPosition {
+impl WheelCascadeGuide {
     pub(crate) fn is_arrived(&self) -> bool {
         todo!()
     }
@@ -411,7 +411,7 @@ mod tests {
 
         // Set the task's wheel position to simulate it being at the end of the day
         // (59 seconds, 59 minutes, 23 hours)
-        task.set_wheel_position(MultiWheelPosition {
+        task.set_wheel_position(WheelCascadeGuide {
             sec: 59,
             min: Some(59),
             hour: Some(23),

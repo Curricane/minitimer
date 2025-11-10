@@ -8,7 +8,7 @@ use crate::{
         RecordId, TaskId, TaskRunner,
         frequency::{FrequencySeconds, FrequencyState},
     },
-    timer::{TimerEvent, wheel::MultiWheelPosition},
+    timer::{TimerEvent, wheel::WheelCascadeGuide},
     utils,
 };
 
@@ -19,7 +19,7 @@ pub struct Task {
     /// The actual task runner that will be executed.
     pub(crate) runner: Arc<dyn TaskRunner<Output = ()> + Send + Sync>,
     /// The round number when the task is scheduled.
-    pub(crate) wheel_position: MultiWheelPosition,
+    pub(crate) cascade_guide: WheelCascadeGuide,
 
     /// The frequency state of the task.
     pub(crate) frequency: FrequencyState,
@@ -27,7 +27,7 @@ pub struct Task {
 
 impl Task {
     pub fn is_arrived(&self) -> bool {
-        self.wheel_position.is_arrived()
+        self.cascade_guide.is_arrived()
     }
 
     /// Get the next alarm timestamp of the task and update the frequency state to next.
@@ -35,8 +35,8 @@ impl Task {
         self.frequency.next_alarm_timestamp()
     }
 
-    pub(crate) fn set_wheel_position(&mut self, wheel_position: MultiWheelPosition) {
-        self.wheel_position = wheel_position;
+    pub(crate) fn set_wheel_position(&mut self, wheel_position: WheelCascadeGuide) {
+        self.cascade_guide = wheel_position;
     }
 }
 
@@ -95,7 +95,7 @@ impl TaskBuilder {
         Ok(Task {
             task_id: self.task_id,
             runner: Arc::new(task_runner),
-            wheel_position: MultiWheelPosition::default(),
+            cascade_guide: WheelCascadeGuide::default(),
             frequency,
         })
     }
