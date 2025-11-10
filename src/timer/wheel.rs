@@ -5,12 +5,20 @@ use std::sync::{
 
 use dashmap::DashMap;
 
-use crate::{error::TaskError, task::Task, timer::slot::Slot, utils::timestamp};
+use crate::{
+    error::TaskError,
+    task::{Task, TaskId},
+    timer::slot::Slot,
+    utils::timestamp,
+};
 
 pub(crate) struct MulitWheel {
     sec_wheel: Wheel,
     min_wheel: Wheel,
     hour_wheel: Wheel,
+
+    // Task tracking map
+    pub(crate) task_tracker_map: DashMap<TaskId, TaskTrackingInfo>,
 }
 
 impl MulitWheel {
@@ -19,6 +27,7 @@ impl MulitWheel {
             sec_wheel: Wheel::new(60),
             min_wheel: Wheel::new(60),
             hour_wheel: Wheel::new(24),
+            task_tracker_map: DashMap::new(),
         }
     }
 
@@ -39,7 +48,7 @@ impl MulitWheel {
         )
     }
 
-    pub(crate) fn cascade_minute_tasks(&self) {
+    pub(crate) fn cascade_minute_tasks_internal(&self) {
         let hand = self.min_wheel.hand.load(Ordering::Relaxed);
         let slot = self.min_wheel.slots.remove(&hand);
         if let Some((_, slot)) = slot {
@@ -51,7 +60,7 @@ impl MulitWheel {
         self.min_wheel.slots.insert(hand, Slot::new());
     }
 
-    pub(crate) fn cascade_hour_tasks(&self) {
+    pub(crate) fn cascade_hour_tasks_internal(&self) {
         let hand = self.hour_wheel.hand.load(Ordering::Relaxed);
         let slot = self.hour_wheel.slots.remove(&hand);
         let mut new_slot = Slot::new();
@@ -76,12 +85,12 @@ impl MulitWheel {
             .hand_move(1)
             .and_then(|carry| {
                 let carry = self.min_wheel.hand_move(carry);
-                self.cascade_minute_tasks();
+                self.cascade_minute_tasks_internal();
                 carry
             })
             .and_then(|carry| {
                 let carry = self.hour_wheel.hand_move(carry);
-                self.cascade_hour_tasks();
+                self.cascade_hour_tasks_internal();
                 carry
             })
     }
@@ -132,28 +141,6 @@ impl MulitWheel {
                 round: 0,
             }
         }
-    }
-
-    pub(crate) fn add_task(&self, mut task: Task) -> Result<(), TaskError> {
-        let next_exec_timestamp = match task.next_alarm_timestamp() {
-            Some(t) => t,
-            None => return Ok(()),
-        };
-
-        let next_alarm_sec = next_exec_timestamp - timestamp();
-
-        let next_pos = self.cal_next_hand_position(next_alarm_sec);
-        task.cascade_guide = next_pos;
-
-        if let Some(hand) = next_pos.hour {
-            self.hour_wheel.add_task(task, hand);
-        } else if let Some(hand) = next_pos.min {
-            self.min_wheel.add_task(task, hand);
-        } else {
-            self.sec_wheel.add_task(task, next_pos.sec);
-        }
-
-        Ok(())
     }
 }
 
@@ -228,6 +215,156 @@ impl WheelCascadeGuide {
     }
 }
 
+// Task tracking information structure - contains task ID and cascade guide
+#[derive(Debug, Clone)]
+pub struct TaskTrackingInfo {
+    pub task_id: TaskId,
+    pub cascade_guide: WheelCascadeGuide,
+    pub wheel_type: WheelType,
+    pub slot_num: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WheelType {
+    Second,
+    Minute,
+    Hour,
+}
+
+impl MulitWheel {
+    /// Quickly query task tracking information
+    pub fn get_task_tracking_info(&self, task_id: TaskId) -> Option<TaskTrackingInfo> {
+        self.task_tracker_map.get(&task_id).map(|info| info.clone())
+    }
+
+    /// Add task and initialize tracking information
+    pub fn add_task(&self, mut task: Task) -> Result<(), TaskError> {
+        let next_exec_timestamp = match task.next_alarm_timestamp() {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+
+        let next_alarm_sec = next_exec_timestamp - timestamp();
+        let next_guide = self.cal_next_hand_position(next_alarm_sec);
+        task.cascade_guide = next_guide;
+
+        // Determine the wheel where the task should be placed based on the calculated cascade guide and record position information
+        let tracking_info = if let Some(hour) = next_guide.hour {
+            self.hour_wheel.add_task(task.clone(), hour);
+            TaskTrackingInfo {
+                task_id: task.task_id,
+                cascade_guide: next_guide,
+                wheel_type: WheelType::Hour,
+                slot_num: hour,
+            }
+        } else if let Some(min) = next_guide.min {
+            self.min_wheel.add_task(task.clone(), min);
+            TaskTrackingInfo {
+                task_id: task.task_id,
+                cascade_guide: next_guide,
+                wheel_type: WheelType::Minute,
+                slot_num: min,
+            }
+        } else {
+            self.sec_wheel.add_task(task.clone(), next_guide.sec);
+            TaskTrackingInfo {
+                task_id: task.task_id,
+                cascade_guide: next_guide,
+                wheel_type: WheelType::Second,
+                slot_num: next_guide.sec,
+            }
+        };
+
+        // Update task tracking map
+        self.task_tracker_map.insert(task.task_id, tracking_info);
+        Ok(())
+    }
+
+    /// Update task tracking information when cascading from minute wheel to second wheel
+    pub fn cascade_minute_tasks(&self) {
+        let hand = self.min_wheel.hand.load(Ordering::Relaxed);
+        let slot = self.min_wheel.slots.remove(&hand);
+        if let Some((_, slot)) = slot {
+            for task in slot.task_map.into_values() {
+                let slot_num = task.cascade_guide.sec;
+
+                // Update information from tracking map
+                if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
+                    tracking_info.wheel_type = WheelType::Second;
+                    tracking_info.slot_num = slot_num;
+                    tracking_info.cascade_guide = task.cascade_guide;
+                }
+
+                // Add task to second wheel
+                self.sec_wheel.add_task(task, slot_num);
+            }
+        }
+        self.min_wheel.slots.insert(hand, Slot::new());
+    }
+
+    /// Update task tracking information when cascading from hour wheel to minute wheel
+    pub fn cascade_hour_tasks(&self) {
+        let hand = self.hour_wheel.hand.load(Ordering::Relaxed);
+        let slot = self.hour_wheel.slots.remove(&hand);
+        let mut new_slot = Slot::new();
+        if let Some((_, slot)) = slot {
+            for mut task in slot.task_map.into_values() {
+                let round = task.cascade_guide.round;
+                if round > 0 {
+                    // Update round in tracking information
+                    if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
+                        task.cascade_guide.round = task.cascade_guide.round.saturating_sub(1);
+                        tracking_info.cascade_guide = task.cascade_guide;
+                    }
+                    new_slot.add_task(task);
+                    continue;
+                } else {
+                    // Move from hour wheel to minute wheel
+                    if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
+                        tracking_info.wheel_type = WheelType::Minute;
+                        tracking_info.slot_num = task.cascade_guide.min.unwrap();
+                        tracking_info.cascade_guide = task.cascade_guide;
+                    }
+
+                    let slot_num = task.cascade_guide.min.unwrap();
+                    self.min_wheel.add_task(task, slot_num);
+                }
+            }
+        }
+        self.hour_wheel.slots.insert(hand, new_slot);
+    }
+
+    /// Remove task and clean up from tracking map
+    pub fn remove_task(&self, task_id: TaskId) -> Option<Task> {
+        if let Some(tracking_info) = self.task_tracker_map.get(&task_id) {
+            let tracking_info = tracking_info.clone();
+            // Remove task from corresponding wheel
+            let removed_task = match tracking_info.wheel_type {
+                WheelType::Second => self.sec_wheel.remove_task(task_id, tracking_info.slot_num),
+                WheelType::Minute => self.min_wheel.remove_task(task_id, tracking_info.slot_num),
+                WheelType::Hour => self.hour_wheel.remove_task(task_id, tracking_info.slot_num),
+            };
+
+            // Remove from tracking map
+            self.task_tracker_map.remove(&task_id);
+            removed_task
+        } else {
+            None
+        }
+    }
+}
+
+// Implement remove_task method for Wheel
+impl Wheel {
+    pub fn remove_task(&self, task_id: TaskId, slot_num: u64) -> Option<Task> {
+        if let Some(mut slot) = self.slots.get_mut(&slot_num) {
+            slot.remove_task(task_id)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,7 +372,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    // 简单的测试任务运行器
+    // Simple test task runner
     struct TestTaskRunner {
         execution_count: Arc<AtomicU64>,
     }
