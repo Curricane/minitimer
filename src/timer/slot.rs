@@ -3,7 +3,7 @@ use std::{collections::HashMap, mem::swap};
 use crate::task::{TaskId, task::Task};
 
 pub(crate) struct Slot {
-    task_map: HashMap<TaskId, Task>,
+    pub task_map: HashMap<TaskId, Task>,
 }
 
 impl Slot {

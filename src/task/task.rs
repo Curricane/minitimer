@@ -8,17 +8,18 @@ use crate::{
         RecordId, TaskId, TaskRunner,
         frequency::{FrequencySeconds, FrequencyState},
     },
-    timer::TimerEvent,
+    timer::{TimerEvent, wheel::MultiWheelPosition},
     utils,
 };
 
+#[derive(Clone)]
 pub struct Task {
     /// The unique identifier for the task.
     pub task_id: TaskId,
     /// The actual task runner that will be executed.
     pub(crate) runner: Arc<dyn TaskRunner<Output = ()> + Send + Sync>,
     /// The round number when the task is scheduled.
-    round: u64,
+    pub(crate) wheel_position: MultiWheelPosition,
 
     /// The frequency state of the task.
     pub(crate) frequency: FrequencyState,
@@ -26,15 +27,20 @@ pub struct Task {
 
 impl Task {
     pub fn is_arrived(&self) -> bool {
-        self.round == 0
+        self.wheel_position.is_arrived()
     }
 
-    pub(crate) fn sub_round(&mut self) {
-        self.round = self.round.saturating_sub(1);
+    /// Get the next alarm timestamp of the task and update the frequency state to next.
+    pub fn next_alarm_timestamp(&mut self) -> Option<u64> {
+        self.frequency.next_alarm_timestamp()
+    }
+
+    pub(crate) fn set_wheel_position(&mut self, wheel_position: MultiWheelPosition) {
+        self.wheel_position = wheel_position;
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct TaskBuilder {
     task_id: TaskId,
     frequency: FrequencySeconds,
@@ -89,7 +95,7 @@ impl TaskBuilder {
         Ok(Task {
             task_id: self.task_id,
             runner: Arc::new(task_runner),
-            round: 0,
+            wheel_position: MultiWheelPosition::default(),
             frequency,
         })
     }
