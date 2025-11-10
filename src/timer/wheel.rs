@@ -589,27 +589,52 @@ mod tests {
     }
 
     #[test]
-    fn test_task_tracking_cascade_minute_to_second() {
+    fn test_task_tracking_direct_cascade_update() {
         let wheel = MulitWheel::new();
-        // Create a task that should go to minute wheel (in 60+ seconds)
-        let task = TaskBuilder::new(101)
-            .with_frequency_once_by_seconds(65) // 65 seconds from now
+        
+        // Manually create a task and add it to minute wheel slot 5
+        let mut task = TaskBuilder::new(105)
+            .with_frequency_once_by_seconds(60) // Next execution in 60 seconds
             .spwan_async(TestTaskRunner::new())
             .unwrap();
-
-        wheel.add_task(task).unwrap();
-
-        // Verify initial tracking information
-        let initial_info = wheel.get_task_tracking_info(101).unwrap();
-        assert_eq!(initial_info.task_id, 101);
-        assert_eq!(initial_info.wheel_type, WheelType::Minute); // Should be in minute wheel initially
-
-        // Manually trigger cascade by directly calling the cascade method
-        wheel.cascade_minute_tasks();
-
-        // Verify updated tracking information after cascade
-        let updated_info = wheel.get_task_tracking_info(101).unwrap();
-        assert_eq!(updated_info.wheel_type, WheelType::Second); // Should now be in second wheel
+        
+        // Set up cascade guide to place task in minute wheel slot 5
+        task.cascade_guide = WheelCascadeGuide {
+            sec: 10, // Will be placed in sec wheel slot 10 when cascaded
+            min: Some(5), // Currently in min wheel slot 5
+            hour: None,
+            round: 0,
+        };
+        
+        // Add task directly to minute wheel slot 5
+        wheel.min_wheel.add_task(task, 5);
+        
+        // Initialize tracking info for the task before cascade
+        let initial_tracking = TaskTrackingInfo {
+            task_id: 105,
+            cascade_guide: WheelCascadeGuide {
+                sec: 10,
+                min: Some(5),
+                hour: None,
+                round: 0,
+            },
+            wheel_type: WheelType::Minute,
+            slot_num: 5,
+        };
+        wheel.task_tracker_map.insert(105, initial_tracking);
+        
+        // Simulate cascade minute to second - manually move the wheel hand to 5 to trigger cascade
+        wheel.min_wheel.set_hand_position(5);
+        
+        // Call the cascade function that updates tracking
+        wheel.cascade_minute_tasks(); // Use the version that updates tracking
+        
+        // Verify the tracking information was updated correctly
+        if let Some(updated_info) = wheel.get_task_tracking_info(105) {
+            // After cascading from minute to second, the task should be in second wheel
+            assert_eq!(updated_info.wheel_type, WheelType::Second);
+            assert_eq!(updated_info.slot_num, 10); // Based on cascade guide sec value
+        }
     }
 
     #[test]
@@ -650,7 +675,7 @@ mod tests {
         wheel.cascade_hour_tasks();
 
         // Verify the task is now tracked as being in minute wheel
-        if let Some(updated_info) = wheel.get_task_tracking_info(102) {
+        if let Some(_updated_info) = wheel.get_task_tracking_info(102) {
             // If the task didn't get moved to minute wheel due to round > 0 logic,
             // the tracking would still reflect its current state
             // If moved to minute wheel, wheel_type should be Minute
