@@ -229,6 +229,7 @@ impl WheelCascadeGuide {
 // Task tracking information structure - contains task ID and cascade guide
 #[derive(Debug, Clone)]
 pub struct TaskTrackingInfo {
+    #[allow(dead_code)]
     pub task_id: TaskId,
     pub cascade_guide: WheelCascadeGuide,
     pub wheel_type: WheelType,

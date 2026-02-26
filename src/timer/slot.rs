@@ -17,6 +17,7 @@ impl Slot {
         self.task_map.insert(task.task_id, task)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn update_task(&mut self, mut task: Task) -> Option<Task> {
         match self.task_map.get_mut(&task.task_id) {
             Some(t) => {
@@ -49,6 +50,7 @@ impl Slot {
         task_id_vec
     }
 
+    #[allow(dead_code)]
     pub(crate) fn shrink(&mut self) {
         self.task_map.shrink_to(128);
     }

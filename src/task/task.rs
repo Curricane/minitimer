@@ -103,10 +103,9 @@ impl TaskBuilder {
 }
 
 pub struct TaskContext {
-    /// The id of Task.
     pub task_id: TaskId,
-    /// The id of the task running instance.
     pub record_id: RecordId,
 
+    #[allow(dead_code)]
     pub(crate) timer_event_sender: Option<Sender<TimerEvent>>,
 }

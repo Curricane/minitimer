@@ -22,6 +22,7 @@ impl Default for FrequencySeconds {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub(crate) enum FrequencyState {
     SecondsRepeated(SecondsState),
     SecondsCountDown(u64, SecondsState),
@@ -56,6 +57,7 @@ impl From<FrequencySeconds> for FrequencyState {
 }
 
 impl FrequencyState {
+    #[allow(dead_code)]
     pub(crate) fn peek_alarm_timestamp(&mut self) -> Option<u64> {
         match self {
             Self::SecondsRepeated(state) => state.peek().map(|t| *t),
@@ -70,6 +72,7 @@ impl FrequencyState {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn down_count(&mut self) {
         if let Self::SecondsCountDown(count, _) = self {
             *count = count.saturating_sub(1);
