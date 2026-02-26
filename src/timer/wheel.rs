@@ -48,49 +48,17 @@ impl MulitWheel {
         )
     }
 
-    pub(crate) fn cascade_minute_tasks_internal(&self) {
-        let hand = self.min_wheel.hand.load(Ordering::Relaxed);
-        let slot = self.min_wheel.slots.remove(&hand);
-        if let Some((_, slot)) = slot {
-            for task in slot.task_map.into_values() {
-                let slot_num = task.cascade_guide.sec;
-                self.sec_wheel.add_task(task, slot_num);
-            }
-        }
-        self.min_wheel.slots.insert(hand, Slot::new());
-    }
-
-    pub(crate) fn cascade_hour_tasks_internal(&self) {
-        let hand = self.hour_wheel.hand.load(Ordering::Relaxed);
-        let slot = self.hour_wheel.slots.remove(&hand);
-        let mut new_slot = Slot::new();
-        if let Some((_, slot)) = slot {
-            for mut task in slot.task_map.into_values() {
-                let round = task.cascade_guide.round;
-                if round > 0 {
-                    task.cascade_guide.round = task.cascade_guide.round.saturating_sub(1);
-                    new_slot.add_task(task);
-                    continue;
-                } else {
-                    let slot_num = task.cascade_guide.min.unwrap();
-                    self.min_wheel.add_task(task, slot_num);
-                }
-            }
-        }
-        self.hour_wheel.slots.insert(hand, new_slot);
-    }
-
     pub(crate) fn tick(&self) -> Option<u64> {
         self.sec_wheel
             .hand_move(1)
             .and_then(|carry| {
                 let carry = self.min_wheel.hand_move(carry);
-                self.cascade_minute_tasks_internal();
+                self.cascade_minute_tasks();
                 carry
             })
             .and_then(|carry| {
                 let carry = self.hour_wheel.hand_move(carry);
-                self.cascade_hour_tasks_internal();
+                self.cascade_hour_tasks();
                 carry
             })
     }
