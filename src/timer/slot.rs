@@ -32,12 +32,16 @@ impl Slot {
         self.task_map.remove(&task_id)
     }
 
-    // Check and reduce cylinder_line锛?    // Returns a Vec. containing all task ids to be executed.(cylinder_line == 0)
-    pub(crate) fn arrival_time_tasks(&mut self) -> Vec<TaskId> {
+    pub(crate) fn arrival_time_tasks(
+        &mut self,
+        current_sec: u64,
+        current_min: u64,
+        current_hour: u64,
+    ) -> Vec<TaskId> {
         let mut task_id_vec = vec![];
 
         for (_, task) in self.task_map.iter_mut() {
-            if task.is_arrived() {
+            if task.is_arrived(current_sec, current_min, current_hour) {
                 task_id_vec.push(task.task_id);
             }
         }

@@ -26,8 +26,9 @@ pub struct Task {
 }
 
 impl Task {
-    pub fn is_arrived(&self) -> bool {
-        self.cascade_guide.is_arrived()
+    pub fn is_arrived(&self, current_sec: u64, current_min: u64, current_hour: u64) -> bool {
+        self.cascade_guide
+            .is_arrived(current_sec, current_min, current_hour)
     }
 
     /// Get the next alarm timestamp of the task and update the frequency state to next.

@@ -95,6 +95,37 @@ impl MulitWheel {
             })
     }
 
+    pub(crate) fn execute_arrived_tasks(&self) -> Vec<Task> {
+        let mut executed_tasks = Vec::new();
+        let (current_sec, current_min, current_hour) = self.get_wheel_positions();
+        let hand = self.sec_wheel.hand_position();
+
+        if let Some(mut slot) = self.sec_wheel.slots.get_mut(&hand) {
+            let arrived_task_ids = slot.arrival_time_tasks(current_sec, current_min, current_hour);
+            for task_id in arrived_task_ids {
+                if let Some(task) = slot.remove_task(task_id) {
+                    self.task_tracker_map.remove(&task_id);
+                    executed_tasks.push(task);
+                }
+            }
+        }
+
+        executed_tasks
+    }
+
+    pub(crate) fn reschedule_task(&self, task: &mut Task) -> bool {
+        if let Some(next_timestamp) = task.next_alarm_timestamp() {
+            let next_alarm_sec = next_timestamp.saturating_sub(timestamp());
+            if next_alarm_sec > 0 {
+                let next_guide = self.cal_next_hand_position(next_alarm_sec);
+                task.set_wheel_position(next_guide);
+                let _ = self.add_task(task.clone());
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn cal_next_hand_position(&self, next_alarm_sec: u64) -> WheelCascadeGuide {
         let (current_second, current_minute, current_hour) = self.get_wheel_positions();
 
@@ -210,8 +241,20 @@ pub(crate) struct WheelCascadeGuide {
 }
 
 impl WheelCascadeGuide {
-    pub(crate) fn is_arrived(&self) -> bool {
-        todo!()
+    pub(crate) fn is_arrived(&self, current_sec: u64, current_min: u64, current_hour: u64) -> bool {
+        if let Some(hour) = self.hour {
+            if let Some(minute) = self.min {
+                return self.sec == current_sec
+                    && minute == current_min
+                    && hour == current_hour
+                    && self.round == 0;
+            }
+            return false;
+        }
+        if let Some(minute) = self.min {
+            return self.sec == current_sec && minute == current_min && self.round == 0;
+        }
+        self.sec == current_sec && self.round == 0
     }
 }
 
@@ -591,24 +634,24 @@ mod tests {
     #[test]
     fn test_task_tracking_direct_cascade_update() {
         let wheel = MulitWheel::new();
-        
+
         // Manually create a task and add it to minute wheel slot 5
         let mut task = TaskBuilder::new(105)
             .with_frequency_once_by_seconds(60) // Next execution in 60 seconds
             .spwan_async(TestTaskRunner::new())
             .unwrap();
-        
+
         // Set up cascade guide to place task in minute wheel slot 5
         task.cascade_guide = WheelCascadeGuide {
-            sec: 10, // Will be placed in sec wheel slot 10 when cascaded
+            sec: 10,      // Will be placed in sec wheel slot 10 when cascaded
             min: Some(5), // Currently in min wheel slot 5
             hour: None,
             round: 0,
         };
-        
+
         // Add task directly to minute wheel slot 5
         wheel.min_wheel.add_task(task, 5);
-        
+
         // Initialize tracking info for the task before cascade
         let initial_tracking = TaskTrackingInfo {
             task_id: 105,
@@ -622,13 +665,13 @@ mod tests {
             slot_num: 5,
         };
         wheel.task_tracker_map.insert(105, initial_tracking);
-        
+
         // Simulate cascade minute to second - manually move the wheel hand to 5 to trigger cascade
         wheel.min_wheel.set_hand_position(5);
-        
+
         // Call the cascade function that updates tracking
         wheel.cascade_minute_tasks(); // Use the version that updates tracking
-        
+
         // Verify the tracking information was updated correctly
         if let Some(updated_info) = wheel.get_task_tracking_info(105) {
             // After cascading from minute to second, the task should be in second wheel
