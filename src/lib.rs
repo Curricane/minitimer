@@ -6,3 +6,4 @@ pub mod utils;
 
 pub use error::TaskError;
 pub use mini_timer::MiniTimer;
+pub use task::{TaskId, TaskState};

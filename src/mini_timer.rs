@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use async_channel::{Receiver, bounded};
 
 use crate::error::TaskError;
-use crate::task::{Task, TaskId};
+use crate::task::{Task, TaskId, TaskState};
 use crate::timer::wheel::MulitWheel;
 use crate::timer::{Timer, TimerEvent};
 
@@ -46,6 +46,24 @@ impl MiniTimer {
         self.wheel.task_tracker_map.len()
     }
 
+    pub fn get_pending_tasks(&self) -> Vec<TaskId> {
+        self.wheel.get_all_pending_tasks()
+    }
+
+    pub fn get_running_tasks(&self) -> Vec<TaskId> {
+        self.wheel.get_running_tasks()
+    }
+
+    pub fn get_task_state(&self, task_id: TaskId) -> Option<TaskState> {
+        if self.wheel.running_tasks.get(&task_id).is_some() {
+            Some(TaskState::Running)
+        } else if self.wheel.task_tracker_map.get(&task_id).is_some() {
+            Some(TaskState::Pending)
+        } else {
+            None
+        }
+    }
+
     pub async fn stop(&self) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
@@ -77,8 +95,12 @@ impl MiniTimer {
                         let cascade_guide = task.cascade_guide;
                         let frequency = task.frequency;
 
+                        wheel.set_task_running(task_id);
+
                         tokio::spawn(async move {
                             let _ = runner.run().await;
+
+                            wheel.clear_task_running(task_id);
 
                             let mut task_clone = Task {
                                 task_id,

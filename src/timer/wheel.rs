@@ -7,7 +7,7 @@ use dashmap::DashMap;
 
 use crate::{
     error::TaskError,
-    task::{Task, TaskId},
+    task::{Task, TaskId, TaskState},
     timer::slot::Slot,
     utils::timestamp,
 };
@@ -17,8 +17,8 @@ pub(crate) struct MulitWheel {
     min_wheel: Wheel,
     hour_wheel: Wheel,
 
-    // Task tracking map
     pub(crate) task_tracker_map: DashMap<TaskId, TaskTrackingInfo>,
+    pub(crate) running_tasks: DashMap<TaskId, TaskState>,
 }
 
 impl MulitWheel {
@@ -28,6 +28,7 @@ impl MulitWheel {
             min_wheel: Wheel::new(60),
             hour_wheel: Wheel::new(24),
             task_tracker_map: DashMap::new(),
+            running_tasks: DashMap::new(),
         }
     }
 
@@ -247,6 +248,30 @@ impl MulitWheel {
     /// Quickly query task tracking information
     pub fn get_task_tracking_info(&self, task_id: TaskId) -> Option<TaskTrackingInfo> {
         self.task_tracker_map.get(&task_id).map(|info| info.clone())
+    }
+
+    /// Get all pending tasks (tasks in the wheel)
+    pub fn get_all_pending_tasks(&self) -> Vec<TaskId> {
+        self.task_tracker_map.iter().map(|r| *r.key()).collect()
+    }
+
+    /// Get all running tasks
+    pub fn get_running_tasks(&self) -> Vec<TaskId> {
+        self.running_tasks
+            .iter()
+            .filter(|r| *r.value() == TaskState::Running)
+            .map(|r| *r.key())
+            .collect()
+    }
+
+    /// Mark a task as running
+    pub fn set_task_running(&self, task_id: TaskId) {
+        self.running_tasks.insert(task_id, TaskState::Running);
+    }
+
+    /// Clear running state for a task
+    pub fn clear_task_running(&self, task_id: TaskId) {
+        self.running_tasks.remove(&task_id);
     }
 
     /// Add task and initialize tracking information
