@@ -55,15 +55,12 @@ impl MiniTimer {
     }
 
     pub fn get_task_state(&self, task_id: TaskId) -> Option<TaskState> {
-        if self
-            .wheel
-            .running_records
-            .iter()
-            .any(|r| r.key().0 == task_id && r.value().state == TaskState::Running)
-        {
-            Some(TaskState::Running)
-        } else if self.wheel.task_tracker_map.get(&task_id).is_some() {
-            Some(TaskState::Pending)
+        if let Some(tracker) = self.wheel.task_tracker_map.get(&task_id) {
+            if !tracker.running_records.is_empty() {
+                Some(TaskState::Running)
+            } else {
+                Some(TaskState::Pending)
+            }
         } else {
             None
         }

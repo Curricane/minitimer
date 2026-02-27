@@ -7,7 +7,7 @@ use dashmap::DashMap;
 
 use crate::{
     error::TaskError,
-    task::{RecordId, RunningRecord, Task, TaskId, TaskState},
+    task::{RecordId, Task, TaskId, TaskState},
     timer::slot::Slot,
     utils::timestamp,
 };
@@ -18,7 +18,6 @@ pub(crate) struct MulitWheel {
     hour_wheel: Wheel,
 
     pub(crate) task_tracker_map: DashMap<TaskId, TaskTrackingInfo>,
-    pub(crate) running_records: DashMap<(TaskId, RecordId), RunningRecord>,
 }
 
 impl MulitWheel {
@@ -28,7 +27,6 @@ impl MulitWheel {
             min_wheel: Wheel::new(60),
             hour_wheel: Wheel::new(24),
             task_tracker_map: DashMap::new(),
-            running_records: DashMap::new(),
         }
     }
 
@@ -73,7 +71,7 @@ impl MulitWheel {
             let arrived_task_ids = slot.arrival_time_tasks(current_sec, current_min, current_hour);
             for task_id in arrived_task_ids {
                 if let Some(task) = slot.remove_task(task_id) {
-                    self.task_tracker_map.remove(&task_id);
+                    // Don't remove from tracker - we need to keep it for running records tracking
                     executed_tasks.push(task);
                 }
             }
@@ -230,11 +228,12 @@ impl WheelCascadeGuide {
 // Task tracking information structure - contains task ID and cascade guide
 #[derive(Debug, Clone)]
 pub struct TaskTrackingInfo {
-    #[allow(dead_code)]
-    pub task_id: TaskId,
     pub cascade_guide: WheelCascadeGuide,
     pub wheel_type: WheelType,
     pub slot_num: u64,
+    #[allow(dead_code)]
+    pub max_concurrency: usize,
+    pub running_records: DashMap<RecordId, TaskState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -255,26 +254,22 @@ impl MulitWheel {
         self.task_tracker_map.iter().map(|r| *r.key()).collect()
     }
 
-    /// Get all running task IDs
+    /// Get all running task IDs (tasks that have at least one running record)
     pub fn get_running_tasks(&self) -> Vec<TaskId> {
-        self.running_records
+        self.task_tracker_map
             .iter()
-            .filter(|r| r.value().state == TaskState::Running)
-            .map(|r| r.key().0)
+            .filter(|t| !t.running_records.is_empty())
+            .map(|t| *t.key())
             .collect()
     }
 
-    /// Get current running count for a specific task
+    #[allow(dead_code)]
+    /// Get current running count for a specific task (O(1))
     pub fn get_task_running_count(&self, task_id: TaskId) -> usize {
-        self.running_records
-            .iter()
-            .filter(|r| r.key().0 == task_id && r.value().state == TaskState::Running)
-            .count()
-    }
-
-    /// Check if a task can start (has not reached max concurrency)
-    pub fn can_task_start(&self, task_id: TaskId, max_concurrency: usize) -> bool {
-        self.get_task_running_count(task_id) < max_concurrency
+        self.task_tracker_map
+            .get(&task_id)
+            .map(|t| t.running_records.len())
+            .unwrap_or(0)
     }
 
     /// Generate a new record ID
@@ -288,25 +283,23 @@ impl MulitWheel {
 
     /// Try to start a task execution, returns Some(record_id) if successful, None if concurrency full
     pub fn try_start_task(&self, task_id: TaskId, max_concurrency: usize) -> Option<RecordId> {
-        if !self.can_task_start(task_id, max_concurrency) {
+        let tracker = self.task_tracker_map.get(&task_id)?;
+
+        let current_count = tracker.running_records.len();
+        if current_count >= max_concurrency {
             return None;
         }
 
         let record_id = self.generate_record_id();
-        self.running_records.insert(
-            (task_id, record_id),
-            RunningRecord {
-                task_id,
-                record_id,
-                state: TaskState::Running,
-            },
-        );
+        tracker.running_records.insert(record_id, TaskState::Running);
         Some(record_id)
     }
 
     /// Complete a task execution
     pub fn complete_task(&self, task_id: TaskId, record_id: RecordId) {
-        self.running_records.remove(&(task_id, record_id));
+        if let Some(tracker) = self.task_tracker_map.get(&task_id) {
+            tracker.running_records.remove(&record_id);
+        }
     }
 
     /// Add task and initialize tracking information
@@ -320,30 +313,35 @@ impl MulitWheel {
         let next_guide = self.cal_next_hand_position(next_alarm_sec);
         task.cascade_guide = next_guide;
 
+        let max_concurrency = task.max_concurrency;
+
         // Determine the wheel where the task should be placed based on the calculated cascade guide and record position information
         let tracking_info = if let Some(hour) = next_guide.hour {
             self.hour_wheel.add_task(task.clone(), hour);
             TaskTrackingInfo {
-                task_id: task.task_id,
                 cascade_guide: next_guide,
                 wheel_type: WheelType::Hour,
                 slot_num: hour,
+                max_concurrency,
+                running_records: DashMap::new(),
             }
         } else if let Some(min) = next_guide.min {
             self.min_wheel.add_task(task.clone(), min);
             TaskTrackingInfo {
-                task_id: task.task_id,
                 cascade_guide: next_guide,
                 wheel_type: WheelType::Minute,
                 slot_num: min,
+                max_concurrency,
+                running_records: DashMap::new(),
             }
         } else {
             self.sec_wheel.add_task(task.clone(), next_guide.sec);
             TaskTrackingInfo {
-                task_id: task.task_id,
                 cascade_guide: next_guide,
                 wheel_type: WheelType::Second,
                 slot_num: next_guide.sec,
+                max_concurrency,
+                running_records: DashMap::new(),
             }
         };
 
@@ -656,7 +654,6 @@ mod tests {
 
         // Verify task tracking information
         let tracking_info = wheel.get_task_tracking_info(100).unwrap();
-        assert_eq!(tracking_info.task_id, 100);
         assert_eq!(tracking_info.wheel_type, WheelType::Second); // 10 seconds should go to second wheel
     }
 
@@ -683,7 +680,6 @@ mod tests {
 
         // Initialize tracking info for the task before cascade
         let initial_tracking = TaskTrackingInfo {
-            task_id: 105,
             cascade_guide: WheelCascadeGuide {
                 sec: 10,
                 min: Some(5),
@@ -692,6 +688,8 @@ mod tests {
             },
             wheel_type: WheelType::Minute,
             slot_num: 5,
+            max_concurrency: 1,
+            running_records: DashMap::new(),
         };
         wheel.task_tracker_map.insert(105, initial_tracking);
 
@@ -731,7 +729,6 @@ mod tests {
 
         // Initialize tracking info for the task
         let tracking_info = TaskTrackingInfo {
-            task_id: 102,
             cascade_guide: WheelCascadeGuide {
                 sec: 5,
                 min: Some(1),
@@ -740,6 +737,8 @@ mod tests {
             },
             wheel_type: WheelType::Hour,
             slot_num: 1,
+            max_concurrency: 1,
+            running_records: DashMap::new(),
         };
         wheel.task_tracker_map.insert(102, tracking_info);
 
@@ -786,13 +785,13 @@ mod tests {
         };
 
         let tracking_info = TaskTrackingInfo {
-            task_id: 999,
             cascade_guide,
             wheel_type: WheelType::Minute,
             slot_num: 20,
+            max_concurrency: 1,
+            running_records: DashMap::new(),
         };
 
-        assert_eq!(tracking_info.task_id, 999);
         assert_eq!(tracking_info.cascade_guide.sec, 10);
         assert_eq!(tracking_info.cascade_guide.min, Some(20));
         assert_eq!(tracking_info.cascade_guide.hour, Some(3));
