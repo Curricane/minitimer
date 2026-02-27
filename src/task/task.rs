@@ -120,3 +120,34 @@ pub struct TaskContext {
     #[allow(dead_code)]
     pub(crate) timer_event_sender: Option<Sender<TimerEvent>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_with_frequency_once_by_timestamp_seconds_valid() {
+        let now = utils::timestamp();
+        let future = now + 100;
+        let mut builder = TaskBuilder::new(1);
+        let result = builder.with_frequency_once_by_timestamp_seconds(future);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_with_frequency_once_by_timestamp_seconds_past() {
+        let now = utils::timestamp();
+        let past = now - 10;
+        let mut builder = TaskBuilder::new(1);
+        let result = builder.with_frequency_once_by_timestamp_seconds(past);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_with_frequency_once_by_timestamp_seconds_now() {
+        let now = utils::timestamp();
+        let mut builder = TaskBuilder::new(1);
+        let result = builder.with_frequency_once_by_timestamp_seconds(now);
+        assert!(result.is_err());
+    }
+}

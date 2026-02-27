@@ -291,7 +291,9 @@ impl MulitWheel {
         }
 
         let record_id = self.generate_record_id();
-        tracker.running_records.insert(record_id, TaskState::Running);
+        tracker
+            .running_records
+            .insert(record_id, TaskState::Running);
         Some(record_id)
     }
 
@@ -798,5 +800,70 @@ mod tests {
         assert_eq!(tracking_info.cascade_guide.round, 1);
         assert_eq!(tracking_info.wheel_type, WheelType::Minute);
         assert_eq!(tracking_info.slot_num, 20);
+    }
+
+    #[test]
+    fn test_wheel_cascade_guide_is_arrived_second_only() {
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: None,
+            hour: None,
+            round: 0,
+        };
+
+        assert!(guide.is_arrived(30, 0, 0));
+        assert!(!guide.is_arrived(29, 0, 0));
+    }
+
+    #[test]
+    fn test_wheel_cascade_guide_is_arrived_minute_and_second() {
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(15),
+            hour: None,
+            round: 0,
+        };
+
+        assert!(guide.is_arrived(30, 15, 0));
+        assert!(!guide.is_arrived(30, 14, 0));
+        assert!(!guide.is_arrived(29, 15, 0));
+    }
+
+    #[test]
+    fn test_wheel_cascade_guide_is_arrived_hour_minute_second() {
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(15),
+            hour: Some(10),
+            round: 0,
+        };
+
+        assert!(guide.is_arrived(30, 15, 10));
+        assert!(!guide.is_arrived(30, 15, 9));
+        assert!(!guide.is_arrived(29, 15, 10));
+    }
+
+    #[test]
+    fn test_wheel_cascade_guide_is_arrived_round_not_zero() {
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: None,
+            hour: None,
+            round: 1,
+        };
+
+        assert!(!guide.is_arrived(30, 0, 0));
+    }
+
+    #[test]
+    fn test_wheel_cascade_guide_is_arrived_min_without_hour() {
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(15),
+            hour: None,
+            round: 0,
+        };
+
+        assert!(guide.is_arrived(30, 15, 5));
     }
 }
