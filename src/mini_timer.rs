@@ -55,7 +55,12 @@ impl MiniTimer {
     }
 
     pub fn get_task_state(&self, task_id: TaskId) -> Option<TaskState> {
-        if self.wheel.running_tasks.get(&task_id).is_some() {
+        if self
+            .wheel
+            .running_records
+            .iter()
+            .any(|r| r.key().0 == task_id && r.value().state == TaskState::Running)
+        {
             Some(TaskState::Running)
         } else if self.wheel.task_tracker_map.get(&task_id).is_some() {
             Some(TaskState::Pending)
@@ -94,22 +99,38 @@ impl MiniTimer {
                         let runner = task.runner.clone();
                         let cascade_guide = task.cascade_guide;
                         let frequency = task.frequency;
+                        let max_concurrency = task.max_concurrency;
 
-                        wheel.set_task_running(task_id);
+                        // Try to start task with per-task concurrency control
+                        match wheel.try_start_task(task_id, max_concurrency) {
+                            Some(record_id) => {
+                                // Schedule next execution BEFORE running (start-time scheduling)
+                                let mut task_clone = Task {
+                                    task_id,
+                                    runner: runner.clone(),
+                                    cascade_guide,
+                                    frequency,
+                                    max_concurrency,
+                                };
+                                let _ = wheel.reschedule_task(&mut task_clone);
 
-                        tokio::spawn(async move {
-                            let _ = runner.run().await;
-
-                            wheel.clear_task_running(task_id);
-
-                            let mut task_clone = Task {
-                                task_id,
-                                runner,
-                                cascade_guide,
-                                frequency,
-                            };
-                            let _ = wheel.reschedule_task(&mut task_clone);
-                        });
+                                tokio::spawn(async move {
+                                    let _ = runner.run().await;
+                                    wheel.complete_task(task_id, record_id);
+                                });
+                            }
+                            None => {
+                                // Concurrency full for this task, re-add to wheel (will retry next tick)
+                                let task_clone = Task {
+                                    task_id,
+                                    runner,
+                                    cascade_guide,
+                                    frequency,
+                                    max_concurrency,
+                                };
+                                let _ = wheel.add_task(task_clone);
+                            }
+                        }
                     }
                 }
                 Ok(TimerEvent::StopTimer) => {

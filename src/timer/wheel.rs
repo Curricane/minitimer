@@ -7,7 +7,7 @@ use dashmap::DashMap;
 
 use crate::{
     error::TaskError,
-    task::{Task, TaskId, TaskState},
+    task::{RecordId, RunningRecord, Task, TaskId, TaskState},
     timer::slot::Slot,
     utils::timestamp,
 };
@@ -18,7 +18,7 @@ pub(crate) struct MulitWheel {
     hour_wheel: Wheel,
 
     pub(crate) task_tracker_map: DashMap<TaskId, TaskTrackingInfo>,
-    pub(crate) running_tasks: DashMap<TaskId, TaskState>,
+    pub(crate) running_records: DashMap<(TaskId, RecordId), RunningRecord>,
 }
 
 impl MulitWheel {
@@ -28,7 +28,7 @@ impl MulitWheel {
             min_wheel: Wheel::new(60),
             hour_wheel: Wheel::new(24),
             task_tracker_map: DashMap::new(),
-            running_tasks: DashMap::new(),
+            running_records: DashMap::new(),
         }
     }
 
@@ -255,23 +255,58 @@ impl MulitWheel {
         self.task_tracker_map.iter().map(|r| *r.key()).collect()
     }
 
-    /// Get all running tasks
+    /// Get all running task IDs
     pub fn get_running_tasks(&self) -> Vec<TaskId> {
-        self.running_tasks
+        self.running_records
             .iter()
-            .filter(|r| *r.value() == TaskState::Running)
-            .map(|r| *r.key())
+            .filter(|r| r.value().state == TaskState::Running)
+            .map(|r| r.key().0)
             .collect()
     }
 
-    /// Mark a task as running
-    pub fn set_task_running(&self, task_id: TaskId) {
-        self.running_tasks.insert(task_id, TaskState::Running);
+    /// Get current running count for a specific task
+    pub fn get_task_running_count(&self, task_id: TaskId) -> usize {
+        self.running_records
+            .iter()
+            .filter(|r| r.key().0 == task_id && r.value().state == TaskState::Running)
+            .count()
     }
 
-    /// Clear running state for a task
-    pub fn clear_task_running(&self, task_id: TaskId) {
-        self.running_tasks.remove(&task_id);
+    /// Check if a task can start (has not reached max concurrency)
+    pub fn can_task_start(&self, task_id: TaskId, max_concurrency: usize) -> bool {
+        self.get_task_running_count(task_id) < max_concurrency
+    }
+
+    /// Generate a new record ID
+    fn generate_record_id(&self) -> RecordId {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as RecordId
+    }
+
+    /// Try to start a task execution, returns Some(record_id) if successful, None if concurrency full
+    pub fn try_start_task(&self, task_id: TaskId, max_concurrency: usize) -> Option<RecordId> {
+        if !self.can_task_start(task_id, max_concurrency) {
+            return None;
+        }
+
+        let record_id = self.generate_record_id();
+        self.running_records.insert(
+            (task_id, record_id),
+            RunningRecord {
+                task_id,
+                record_id,
+                state: TaskState::Running,
+            },
+        );
+        Some(record_id)
+    }
+
+    /// Complete a task execution
+    pub fn complete_task(&self, task_id: TaskId, record_id: RecordId) {
+        self.running_records.remove(&(task_id, record_id));
     }
 
     /// Add task and initialize tracking information

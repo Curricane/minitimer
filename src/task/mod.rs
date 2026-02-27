@@ -13,6 +13,13 @@ pub enum TaskState {
     Removed,
 }
 
+#[derive(Debug, Clone)]
+pub struct RunningRecord {
+    pub task_id: TaskId,
+    pub record_id: RecordId,
+    pub state: TaskState,
+}
+
 pub use runner::TaskRunner;
 
 pub use task::{Task, TaskBuilder, TaskContext};

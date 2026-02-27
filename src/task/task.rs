@@ -23,6 +23,9 @@ pub struct Task {
 
     /// The frequency state of the task.
     pub(crate) frequency: FrequencyState,
+
+    /// Maximum concurrent executions for this task.
+    pub max_concurrency: usize,
 }
 
 impl Task {
@@ -45,13 +48,15 @@ impl Task {
 pub struct TaskBuilder {
     task_id: TaskId,
     frequency: FrequencySeconds,
+    max_concurrency: usize,
 }
 
 impl TaskBuilder {
     pub fn new(task_id: u64) -> Self {
         Self {
             task_id: task_id,
-            ..Default::default()
+            frequency: FrequencySeconds::default(),
+            max_concurrency: 1,
         }
     }
 
@@ -62,6 +67,11 @@ impl TaskBuilder {
 
     pub fn with_frequency_repeated_by_seconds(&mut self, seconds: u64) -> &mut Self {
         self.frequency = FrequencySeconds::Repeated(seconds);
+        self
+    }
+
+    pub fn with_max_concurrency(&mut self, max: usize) -> &mut Self {
+        self.max_concurrency = max;
         self
     }
 
@@ -98,6 +108,7 @@ impl TaskBuilder {
             runner: Arc::new(task_runner),
             cascade_guide: WheelCascadeGuide::default(),
             frequency,
+            max_concurrency: self.max_concurrency,
         })
     }
 }
