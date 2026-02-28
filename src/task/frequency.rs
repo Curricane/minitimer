@@ -8,10 +8,14 @@ use crate::utils::timestamp;
 pub(crate) type SecondsState = Peekable<StepBy<RangeFrom<u64>>>;
 const ONE_MINUTE: u64 = 60;
 
+/// Frequency specification for task execution timing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrequencySeconds {
+    /// Execute once after the specified number of seconds.
     Once(u64),
+    /// Execute repeatedly at the specified interval (in seconds).
     Repeated(u64),
+    /// Execute a specific number of times at the specified interval.
     CountDown(u64, u64),
 }
 
@@ -21,10 +25,15 @@ impl Default for FrequencySeconds {
     }
 }
 
+/// Internal state representation of task frequency.
+///
+/// This is used to track the next execution time for tasks.
 #[derive(Clone)]
 #[allow(dead_code)]
 pub(crate) enum FrequencyState {
+    /// Repeated execution at a fixed interval.
     SecondsRepeated(SecondsState),
+    /// Countdown execution with a limited number of repetitions.
     SecondsCountDown(u64, SecondsState),
 }
 
@@ -58,6 +67,10 @@ impl From<FrequencySeconds> for FrequencyState {
 
 impl FrequencyState {
     #[allow(dead_code)]
+    /// Peeks at the next alarm timestamp without advancing the state.
+    ///
+    /// # Returns
+    /// The next timestamp when the task should execute, or None if no more executions.
     pub(crate) fn peek_alarm_timestamp(&mut self) -> Option<u64> {
         match self {
             Self::SecondsRepeated(state) => state.peek().map(|t| *t),
@@ -65,6 +78,10 @@ impl FrequencyState {
         }
     }
 
+    /// Gets the next alarm timestamp and advances the state.
+    ///
+    /// # Returns
+    /// The next timestamp when the task should execute, or None if no more executions.
     pub(crate) fn next_alarm_timestamp(&mut self) -> Option<u64> {
         match self {
             Self::SecondsRepeated(state) => state.next(),
@@ -73,6 +90,7 @@ impl FrequencyState {
     }
 
     #[allow(dead_code)]
+    /// Decrements the countdown for CountDown frequency types.
     pub(crate) fn down_count(&mut self) {
         if let Self::SecondsCountDown(count, _) = self {
             *count = count.saturating_sub(1);

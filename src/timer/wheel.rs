@@ -12,6 +12,15 @@ use crate::{
     utils::timestamp,
 };
 
+/// Multi-level time wheel implementation for task scheduling.
+///
+/// This structure implements a three-level timing wheel system:
+/// - Second wheel: 60 slots (0-59 seconds)
+/// - Minute wheel: 60 slots (0-59 minutes)
+/// - Hour wheel: 24 slots (0-23 hours)
+///
+/// Tasks are distributed across these wheels based on their execution time,
+/// providing O(1) time complexity for task lookup and execution.
 pub(crate) struct MulitWheel {
     sec_wheel: Wheel,
     min_wheel: Wheel,
@@ -21,6 +30,7 @@ pub(crate) struct MulitWheel {
 }
 
 impl MulitWheel {
+    /// Creates a new MultiWheel instance with three-level timing wheels.
     pub(crate) fn new() -> Self {
         Self {
             sec_wheel: Wheel::new(60),
@@ -38,7 +48,7 @@ impl MulitWheel {
         self.hour_wheel.set_hand_position(hour);
     }
 
-    /// Get the current positions of all wheels for testing purposes
+    /// Get the current positions of all wheels for testing purposes.
     pub(crate) fn get_wheel_positions(&self) -> (u64, u64, u64) {
         (
             self.sec_wheel.hand.load(Ordering::Relaxed),
@@ -47,6 +57,14 @@ impl MulitWheel {
         )
     }
 
+    /// Advances the time wheel by one second.
+    ///
+    /// This method moves the second wheel hand forward by one position.
+    /// If the second wheel overflows (reaches 60), it triggers a cascade to the minute wheel.
+    /// If the minute wheel overflows, it triggers a cascade to the hour wheel.
+    ///
+    /// Returns the carry value if there's an overflow beyond hours (i.e., more than 24 hours have passed),
+    /// otherwise returns None.
     pub(crate) fn tick(&self) -> Option<u64> {
         self.sec_wheel
             .hand_move(1)
@@ -62,6 +80,10 @@ impl MulitWheel {
             })
     }
 
+    /// Executes all tasks that have arrived at their scheduled time.
+    ///
+    /// Returns a vector of tasks that are ready to be executed.
+    /// The tasks are removed from the wheel but not from the task tracker.
     pub(crate) fn execute_arrived_tasks(&self) -> Vec<Task> {
         let mut executed_tasks = Vec::new();
         let (current_sec, current_min, current_hour) = self.get_wheel_positions();
@@ -80,6 +102,12 @@ impl MulitWheel {
         executed_tasks
     }
 
+    /// Reschedules a task for its next execution.
+    ///
+    /// This is called after a task completes execution to schedule its next run
+    /// based on its frequency settings.
+    ///
+    /// Returns `true` if the task was successfully rescheduled, `false` otherwise.
     pub(crate) fn reschedule_task(&self, task: &mut Task) -> bool {
         if let Some(next_timestamp) = task.next_alarm_timestamp() {
             let next_alarm_sec = next_timestamp.saturating_sub(timestamp());
@@ -93,6 +121,17 @@ impl MulitWheel {
         false
     }
 
+    /// Calculates the next wheel position for a task based on the time until its next execution.
+    ///
+    /// This method determines which slot the task should be placed in on which wheel,
+    /// based on the number of seconds until the task's next execution time.
+    ///
+    /// # Arguments
+    /// * `next_alarm_sec` - The number of seconds until the task's next execution
+    ///
+    /// # Returns
+    /// A `WheelCascadeGuide` that specifies the exact position (second, minute, hour, and round)
+    /// where the task should be placed.
     pub(crate) fn cal_next_hand_position(&self, next_alarm_sec: u64) -> WheelCascadeGuide {
         let (current_second, current_minute, current_hour) = self.get_wheel_positions();
 
@@ -142,6 +181,10 @@ impl MulitWheel {
     }
 }
 
+/// A single level time wheel with a fixed number of slots.
+///
+/// Each wheel maintains a "hand" that points to the current position.
+/// Tasks are placed in slots based on their scheduled execution time.
 pub(crate) struct Wheel {
     slots: DashMap<u64, Slot>,
     hand: Arc<AtomicU64>,
@@ -149,6 +192,7 @@ pub(crate) struct Wheel {
 }
 
 impl Wheel {
+    /// Creates a new Wheel with the specified number of slots.
     pub(crate) fn new(num_slots: u64) -> Self {
         let slots = DashMap::new();
         for i in 0..num_slots {
@@ -162,8 +206,17 @@ impl Wheel {
         }
     }
 
-    /// Move the hand to the next slot.
-    /// Returns the carry amount.
+    /// Moves the hand forward by the specified number of steps.
+    ///
+    /// Returns the carry amount if the hand overflows the wheel (wraps around),
+    /// otherwise returns None.
+    ///
+    /// # Arguments
+    /// * `step` - The number of slots to move forward
+    ///
+    /// # Returns
+    /// * `Some(carry)` - The number of times the wheel has wrapped around
+    /// * `None` - No overflow occurred
     pub(crate) fn hand_move(&self, step: u64) -> Option<u64> {
         if step == 0 {
             return None;
@@ -183,22 +236,32 @@ impl Wheel {
         }
     }
 
+    /// Returns the current position of the hand.
     pub(crate) fn hand_position(&self) -> u64 {
         self.hand.load(Ordering::Relaxed)
     }
 
-    /// Set the hand position of the wheel for testing purposes
+    /// Set the hand position of the wheel for testing purposes.
     #[cfg(test)]
     pub(crate) fn set_hand_position(&self, position: u64) {
         self.hand
             .store(position % self.num_slots, Ordering::Relaxed);
     }
 
+    /// Adds a task to the specified slot in the wheel.
+    ///
+    /// # Arguments
+    /// * `task` - The task to add
+    /// * `slot_num` - The slot number to place the task in
     pub(crate) fn add_task(&self, task: Task, slot_num: u64) {
         self.slots.get_mut(&slot_num).unwrap().add_task(task);
     }
 }
 
+/// Guide for cascade positioning of tasks across multiple time wheels.
+///
+/// This structure tracks the exact position where a task should be placed
+/// across the three-level time wheel system (second, minute, hour wheels).
 #[derive(Debug, Default, Copy, Clone)]
 pub(crate) struct WheelCascadeGuide {
     pub sec: u64,
@@ -208,6 +271,15 @@ pub(crate) struct WheelCascadeGuide {
 }
 
 impl WheelCascadeGuide {
+    /// Checks if the task has arrived at its scheduled time.
+    ///
+    /// # Arguments
+    /// * `current_sec` - Current second (0-59)
+    /// * `current_min` - Current minute (0-59)
+    /// * `current_hour` - Current hour (0-23)
+    ///
+    /// # Returns
+    /// `true` if the current time matches the scheduled time and round is 0, `false` otherwise.
     pub(crate) fn is_arrived(&self, current_sec: u64, current_min: u64, current_hour: u64) -> bool {
         if let Some(hour) = self.hour {
             if let Some(minute) = self.min {
@@ -225,7 +297,10 @@ impl WheelCascadeGuide {
     }
 }
 
-// Task tracking information structure - contains task ID and cascade guide
+/// Task tracking information structure.
+///
+/// Contains metadata about a task including its position in the wheel system,
+/// the wheel type it's currently in, and running records for concurrency tracking.
 #[derive(Debug, Clone)]
 pub struct TaskTrackingInfo {
     pub cascade_guide: WheelCascadeGuide,
@@ -236,6 +311,7 @@ pub struct TaskTrackingInfo {
     pub running_records: DashMap<RecordId, TaskState>,
 }
 
+/// Represents the type of wheel a task is currently in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WheelType {
     Second,
@@ -244,17 +320,29 @@ pub enum WheelType {
 }
 
 impl MulitWheel {
-    /// Quickly query task tracking information
+    /// Quickly query task tracking information by task ID.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task
+    ///
+    /// # Returns
+    /// Some(TaskTrackingInfo) if the task exists, None otherwise.
     pub fn get_task_tracking_info(&self, task_id: TaskId) -> Option<TaskTrackingInfo> {
         self.task_tracker_map.get(&task_id).map(|info| info.clone())
     }
 
-    /// Get all pending tasks (tasks in the wheel)
+    /// Get all pending tasks (tasks currently scheduled in the wheel).
+    ///
+    /// # Returns
+    /// A vector of task IDs that are currently pending execution.
     pub fn get_all_pending_tasks(&self) -> Vec<TaskId> {
         self.task_tracker_map.iter().map(|r| *r.key()).collect()
     }
 
-    /// Get all running task IDs (tasks that have at least one running record)
+    /// Get all running task IDs (tasks that have at least one running record).
+    ///
+    /// # Returns
+    /// A vector of task IDs that are currently running.
     pub fn get_running_tasks(&self) -> Vec<TaskId> {
         self.task_tracker_map
             .iter()
@@ -264,7 +352,15 @@ impl MulitWheel {
     }
 
     #[allow(dead_code)]
-    /// Get current running count for a specific task (O(1))
+    /// Get the current number of running instances for a specific task.
+    ///
+    /// This is an O(1) operation.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task
+    ///
+    /// # Returns
+    /// The number of currently running instances of the task.
     pub fn get_task_running_count(&self, task_id: TaskId) -> usize {
         self.task_tracker_map
             .get(&task_id)
@@ -272,7 +368,7 @@ impl MulitWheel {
             .unwrap_or(0)
     }
 
-    /// Generate a new record ID
+    /// Generates a new unique record ID based on the current timestamp in nanoseconds.
     fn generate_record_id(&self) -> RecordId {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now()
@@ -281,7 +377,18 @@ impl MulitWheel {
             .as_nanos() as RecordId
     }
 
-    /// Try to start a task execution, returns Some(record_id) if successful, None if concurrency full
+    /// Attempts to start a task execution with concurrency control.
+    ///
+    /// This method checks if the task has reached its maximum concurrency limit
+    /// before starting a new execution instance.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task
+    /// * `max_concurrency` - The maximum allowed concurrent executions for this task
+    ///
+    /// # Returns
+    /// * `Some(RecordId)` - A unique record ID for this execution instance if successful
+    /// * `None` - If the concurrency limit has been reached
     pub fn try_start_task(&self, task_id: TaskId, max_concurrency: usize) -> Option<RecordId> {
         let tracker = self.task_tracker_map.get(&task_id)?;
 
@@ -297,14 +404,30 @@ impl MulitWheel {
         Some(record_id)
     }
 
-    /// Complete a task execution
+    /// Marks a task execution as completed.
+    ///
+    /// This removes the running record, allowing new executions of the task to start.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task
+    /// * `record_id` - The record ID of the execution instance to complete
     pub fn complete_task(&self, task_id: TaskId, record_id: RecordId) {
         if let Some(tracker) = self.task_tracker_map.get(&task_id) {
             tracker.running_records.remove(&record_id);
         }
     }
 
-    /// Add task and initialize tracking information
+    /// Adds a task to the wheel and initializes its tracking information.
+    ///
+    /// The task is placed in the appropriate wheel (second, minute, or hour)
+    /// based on its next execution time.
+    ///
+    /// # Arguments
+    /// * `task` - The task to add
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the task was successfully added
+    /// * `Err(TaskError)` - If there was an error adding the task
     pub fn add_task(&self, mut task: Task) -> Result<(), TaskError> {
         let next_exec_timestamp = match task.next_alarm_timestamp() {
             Some(t) => t,
@@ -352,7 +475,11 @@ impl MulitWheel {
         Ok(())
     }
 
-    /// Update task tracking information when cascading from minute wheel to second wheel
+    /// Cascades tasks from the minute wheel to the second wheel.
+    ///
+    /// This is called when the minute wheel hand advances past a slot.
+    /// Tasks in that slot are moved to their designated second wheel slot
+    /// based on their cascade guide.
     pub fn cascade_minute_tasks(&self) {
         let hand = self.min_wheel.hand.load(Ordering::Relaxed);
         let slot = self.min_wheel.slots.remove(&hand);
@@ -374,7 +501,12 @@ impl MulitWheel {
         self.min_wheel.slots.insert(hand, Slot::new());
     }
 
-    /// Update task tracking information when cascading from hour wheel to minute wheel
+    /// Cascades tasks from the hour wheel to the minute wheel.
+    ///
+    /// This is called when the hour wheel hand advances past a slot.
+    /// Tasks in that slot are either:
+    /// - Moved to the minute wheel if their round is 0
+    /// - Re-added to the hour wheel with an updated round count if round > 0
     pub fn cascade_hour_tasks(&self) {
         let hand = self.hour_wheel.hand.load(Ordering::Relaxed);
         let slot = self.hour_wheel.slots.remove(&hand);
@@ -406,7 +538,13 @@ impl MulitWheel {
         self.hour_wheel.slots.insert(hand, new_slot);
     }
 
-    /// Remove task and clean up from tracking map
+    /// Removes a task from the wheel and cleans up tracking information.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task to remove
+    ///
+    /// # Returns
+    /// The removed task if it existed, None otherwise.
     pub fn remove_task(&self, task_id: TaskId) -> Option<Task> {
         if let Some((_, tracking_info)) = self.task_tracker_map.remove(&task_id) {
             let tracking_info = tracking_info.clone();
@@ -426,6 +564,14 @@ impl MulitWheel {
 
 // Implement remove_task method for Wheel
 impl Wheel {
+    /// Removes a task from a specific slot in the wheel.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task to remove
+    /// * `slot_num` - The slot number to remove the task from
+    ///
+    /// # Returns
+    /// The removed task if it existed in the slot, None otherwise.
     pub fn remove_task(&self, task_id: TaskId, slot_num: u64) -> Option<Task> {
         if let Some(mut slot) = self.slots.get_mut(&slot_num) {
             slot.remove_task(task_id)

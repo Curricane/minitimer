@@ -12,6 +12,10 @@ use crate::{
     utils,
 };
 
+/// A scheduled task that can be executed by the timer.
+///
+/// The Task contains the execution logic (via TaskRunner) and scheduling
+/// information (frequency, wheel position).
 #[derive(Clone)]
 pub struct Task {
     /// The unique identifier for the task.
@@ -29,12 +33,24 @@ pub struct Task {
 }
 
 impl Task {
+    /// Checks if the task has arrived at its scheduled time.
+    ///
+    /// # Arguments
+    /// * `current_sec` - Current second (0-59)
+    /// * `current_min` - Current minute (0-59)
+    /// * `current_hour` - Current hour (0-23)
+    ///
+    /// # Returns
+    /// `true` if the current time matches the task's scheduled time, `false` otherwise.
     pub fn is_arrived(&self, current_sec: u64, current_min: u64, current_hour: u64) -> bool {
         self.cascade_guide
             .is_arrived(current_sec, current_min, current_hour)
     }
 
-    /// Get the next alarm timestamp of the task and update the frequency state to next.
+    /// Gets the next alarm timestamp and advances the frequency state.
+    ///
+    /// # Returns
+    /// The next timestamp when the task should execute, or None if no more executions.
     pub fn next_alarm_timestamp(&mut self) -> Option<u64> {
         self.frequency.next_alarm_timestamp()
     }
@@ -44,6 +60,10 @@ impl Task {
     }
 }
 
+/// Builder for creating Task instances.
+///
+/// Allows configuration of task frequency, concurrency limits, and other properties
+/// before building a Task.
 #[derive(Default, Clone, Copy)]
 pub struct TaskBuilder {
     task_id: TaskId,
@@ -52,6 +72,10 @@ pub struct TaskBuilder {
 }
 
 impl TaskBuilder {
+    /// Creates a new TaskBuilder with the given task ID.
+    ///
+    /// # Arguments
+    /// * `task_id` - Unique identifier for the task
     pub fn new(task_id: u64) -> Self {
         Self {
             task_id: task_id,
@@ -60,21 +84,38 @@ impl TaskBuilder {
         }
     }
 
+    /// Sets the task to execute once after the specified number of seconds.
+    ///
+    /// # Arguments
+    /// * `seconds` - Number of seconds to wait before execution
     pub fn with_frequency_once_by_seconds(&mut self, seconds: u64) -> &mut Self {
         self.frequency = FrequencySeconds::Once(seconds);
         self
     }
 
+    /// Sets the task to execute repeatedly at the specified interval.
+    ///
+    /// # Arguments
+    /// * `seconds` - Interval in seconds between executions
     pub fn with_frequency_repeated_by_seconds(&mut self, seconds: u64) -> &mut Self {
         self.frequency = FrequencySeconds::Repeated(seconds);
         self
     }
 
+    /// Sets the maximum number of concurrent executions for this task.
+    ///
+    /// # Arguments
+    /// * `max` - Maximum number of concurrent executions
     pub fn with_max_concurrency(&mut self, max: usize) -> &mut Self {
         self.max_concurrency = max;
         self
     }
 
+    /// Sets the task to execute a specific number of times at the specified interval.
+    ///
+    /// # Arguments
+    /// * `count_down` - Number of times the task will execute
+    /// * `seconds` - Interval in seconds between executions
     pub fn with_frequency_count_down_by_seconds(
         &mut self,
         count_down: u64,
@@ -84,6 +125,14 @@ impl TaskBuilder {
         self
     }
 
+    /// Sets the task to execute once at the specified Unix timestamp.
+    ///
+    /// # Arguments
+    /// * `timestamp` - Unix timestamp (seconds since epoch) when the task should execute
+    ///
+    /// # Returns
+    /// * `Ok(&mut Self)` - If the timestamp is in the future
+    /// * `Err(TaskError)` - If the timestamp is in the past or now
     pub fn with_frequency_once_by_timestamp_seconds(
         &mut self,
         timestamp: u64,
@@ -98,6 +147,14 @@ impl TaskBuilder {
         Ok(self)
     }
 
+    /// Builds and returns a Task with the configured settings.
+    ///
+    /// # Arguments
+    /// * `task_runner` - The runner that defines what the task does
+    ///
+    /// # Returns
+    /// * `Ok(Task)` - If the task was successfully built
+    /// * `Err(TaskError)` - If there was an error building the task
     pub fn spwan_async<T: TaskRunner<Output = ()> + Send + Sync>(
         self,
         task_runner: T,
@@ -113,6 +170,9 @@ impl TaskBuilder {
     }
 }
 
+/// Context provided to a task during execution.
+///
+/// Contains information about the task and execution instance.
 pub struct TaskContext {
     pub task_id: TaskId,
     pub record_id: RecordId,

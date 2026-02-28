@@ -8,6 +8,10 @@ use crate::task::{Task, TaskId, TaskState};
 use crate::timer::wheel::MulitWheel;
 use crate::timer::{Timer, TimerEvent};
 
+/// Main timer system for scheduling and executing tasks.
+///
+/// MiniTimer is the primary interface for users to interact with the timer system.
+/// It handles task scheduling, execution, and concurrency control.
 pub struct MiniTimer {
     wheel: Arc<MulitWheel>,
     event_receiver: Receiver<TimerEvent>,
@@ -16,6 +20,10 @@ pub struct MiniTimer {
 }
 
 impl MiniTimer {
+    /// Creates a new MiniTimer instance.
+    ///
+    /// # Returns
+    /// A new MiniTimer with initialized components.
     pub fn new() -> Self {
         let (event_sender, event_receiver) = bounded(16);
 
@@ -30,30 +38,73 @@ impl MiniTimer {
         }
     }
 
+    /// Adds a task to the timer system.
+    ///
+    /// # Arguments
+    /// * `task` - The task to add
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the task was successfully added
+    /// * `Err(TaskError)` - If there was an error adding the task
     pub fn add_task(&self, task: Task) -> Result<(), TaskError> {
         self.wheel.add_task(task)
     }
 
+    /// Removes a task from the timer system.
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to remove
+    ///
+    /// # Returns
+    /// The removed task if it existed, None otherwise.
     pub fn remove_task(&self, task_id: TaskId) -> Option<Task> {
         self.wheel.remove_task(task_id)
     }
 
+    /// Checks if a task exists in the timer system.
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to check
+    ///
+    /// # Returns
+    /// `true` if the task exists, `false` otherwise.
     pub fn contains_task(&self, task_id: TaskId) -> bool {
         self.wheel.get_task_tracking_info(task_id).is_some()
     }
 
+    /// Gets the total number of tasks in the timer system.
+    ///
+    /// # Returns
+    /// The number of tasks currently scheduled.
     pub fn task_count(&self) -> usize {
         self.wheel.task_tracker_map.len()
     }
 
+    /// Gets a list of all pending tasks.
+    ///
+    /// # Returns
+    /// A vector of task IDs that are currently pending execution.
     pub fn get_pending_tasks(&self) -> Vec<TaskId> {
         self.wheel.get_all_pending_tasks()
     }
 
+    /// Gets a list of all running tasks.
+    ///
+    /// # Returns
+    /// A vector of task IDs that are currently running.
     pub fn get_running_tasks(&self) -> Vec<TaskId> {
         self.wheel.get_running_tasks()
     }
 
+    /// Gets the current state of a task.
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to check
+    ///
+    /// # Returns
+    /// * `Some(TaskState::Running)` - If the task is currently running
+    /// * `Some(TaskState::Pending)` - If the task is scheduled but not running
+    /// * `None` - If the task doesn't exist
     pub fn get_task_state(&self, task_id: TaskId) -> Option<TaskState> {
         if let Some(tracker) = self.wheel.task_tracker_map.get(&task_id) {
             if !tracker.running_records.is_empty() {
@@ -66,6 +117,9 @@ impl MiniTimer {
         }
     }
 
+    /// Stops the timer system.
+    ///
+    /// This stops the internal timer and sets the running flag to false.
     pub async fn stop(&self) {
         if !self.is_running.load(Ordering::Relaxed) {
             return;
@@ -75,6 +129,12 @@ impl MiniTimer {
         self.is_running.store(false, Ordering::Relaxed);
     }
 
+    /// Runs the timer event loop.
+    ///
+    /// This method starts the internal timer and processes events in a loop:
+    /// 1. Handles TimerEvent::Tick by executing arrived tasks
+    /// 2. Handles TimerEvent::StopTimer by breaking the loop
+    /// 3. Stops on any error
     pub async fn run(&mut self) {
         self.is_running.store(true, Ordering::Relaxed);
 
@@ -142,6 +202,9 @@ impl MiniTimer {
         self.is_running.store(false, Ordering::Relaxed);
     }
 
+    /// Starts the timer system in a new async task.
+    ///
+    /// This is a convenience method that spawns the run() method in a new tokio task.
     pub fn start(&self) {
         let mut timer = self.clone();
         tokio::spawn(async move {
@@ -149,6 +212,10 @@ impl MiniTimer {
         });
     }
 
+    /// Checks if the timer system is currently running.
+    ///
+    /// # Returns
+    /// `true` if the timer is running, `false` otherwise.
     pub fn is_running(&self) -> bool {
         self.is_running.load(Ordering::Relaxed)
     }
