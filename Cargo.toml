@@ -6,7 +6,7 @@ edition = "2024"
 repository = "https://github.com/Curricane/minitimer"
 description = "A mini timer of delayed tasks. Only asynchronous tasks are possible on tokio runtime, and dynamic add/cancel/remove is supported."
 keywords = [ "scheduler", "timer", "delay", "tokio"]
-license = "Apache-2.0 OR MIT"
+license = "Apache-2.0"
 categories = ["development-tools", "data-structures", "asynchronous", "data-structures", "accessibility"]
 
 
