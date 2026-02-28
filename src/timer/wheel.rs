@@ -222,7 +222,6 @@ impl Wheel {
             return None;
         }
         let pre_hand = self.hand.fetch_add(step, Ordering::Relaxed);
-        println!("pre_hand: {}", pre_hand);
         let new_hand = pre_hand + step;
         let carry = new_hand / self.num_slots;
 

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use async_channel::{Receiver, bounded};
+use async_channel::{Receiver, Sender, bounded};
 
 use crate::error::TaskError;
 use crate::task::{Task, TaskId, TaskState};
@@ -15,6 +16,7 @@ use crate::timer::{Timer, TimerEvent};
 pub struct MiniTimer {
     wheel: Arc<MulitWheel>,
     event_receiver: Receiver<TimerEvent>,
+    event_sender: Sender<TimerEvent>,
     timer: Timer,
     is_running: Arc<AtomicBool>,
 }
@@ -28,14 +30,32 @@ impl MiniTimer {
         let (event_sender, event_receiver) = bounded(16);
 
         let wheel = Arc::new(MulitWheel::new());
-        let timer = Timer::new(event_sender);
+        let timer = Timer::new(event_sender.clone());
+        let is_running = Arc::new(AtomicBool::new(true));
 
-        Self {
+        let mini_timer = Self {
             wheel,
             event_receiver,
+            event_sender,
             timer,
-            is_running: Arc::new(AtomicBool::new(false)),
-        }
+            is_running: is_running.clone(),
+        };
+
+        let mut timer_clone = mini_timer.clone();
+        tokio::spawn(async move {
+            timer_clone.run().await;
+        });
+
+        mini_timer
+    }
+
+    /// Advances the timer by one tick (one second).
+    ///
+    /// This is useful for testing purposes to simulate time progression
+    /// without waiting for the real clock.
+    /// Note: This requires start() to be called first to start the event loop.
+    pub async fn tick(&self) {
+        let _ = self.event_sender.send(TimerEvent::Tick).await;
     }
 
     /// Adds a task to the timer system.
@@ -144,6 +164,8 @@ impl MiniTimer {
             timer.run().await;
         });
 
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
         loop {
             match self.event_receiver.recv().await {
                 Ok(TimerEvent::Tick) => {
@@ -202,16 +224,6 @@ impl MiniTimer {
         self.is_running.store(false, Ordering::Relaxed);
     }
 
-    /// Starts the timer system in a new async task.
-    ///
-    /// This is a convenience method that spawns the run() method in a new tokio task.
-    pub fn start(&self) {
-        let mut timer = self.clone();
-        tokio::spawn(async move {
-            timer.run().await;
-        });
-    }
-
     /// Checks if the timer system is currently running.
     ///
     /// # Returns
@@ -232,6 +244,7 @@ impl Clone for MiniTimer {
         Self {
             wheel: self.wheel.clone(),
             event_receiver: self.event_receiver.clone(),
+            event_sender: self.event_sender.clone(),
             timer: self.timer.clone(),
             is_running: self.is_running.clone(),
         }

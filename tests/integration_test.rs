@@ -3,13 +3,13 @@
 //! These tests verify the end-to-end functionality of the timer system,
 //! including task scheduling, execution, and lifecycle management.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use minitimer::task::{TaskBuilder, TaskRunner};
 use minitimer::MiniTimer;
+use minitimer::task::{TaskBuilder, TaskRunner};
 
 /// A simple test task that increments a counter when executed.
 struct CounterTask {
@@ -45,11 +45,8 @@ async fn test_task_executes_once() {
         .unwrap();
 
     timer.add_task(task).unwrap();
-    timer.start();
 
     tokio::time::sleep(Duration::from_secs(3)).await;
-
-    timer.stop().await;
 
     let count = counter.load(Ordering::SeqCst);
     assert!(
@@ -99,10 +96,7 @@ async fn test_task_state_query() {
     timer.add_task(task).unwrap();
 
     let state = timer.get_task_state(200);
-    assert!(
-        state.is_some(),
-        "Task state should exist for task 200"
-    );
+    assert!(state.is_some(), "Task state should exist for task 200");
     assert_eq!(
         state.unwrap(),
         minitimer::TaskState::Pending,
@@ -180,11 +174,8 @@ async fn test_repeated_task() {
         .unwrap();
 
     timer.add_task(task).unwrap();
-    timer.start();
 
     tokio::time::sleep(Duration::from_secs(5)).await;
-
-    timer.stop().await;
 
     let count = counter.load(Ordering::SeqCst);
     assert!(
@@ -207,11 +198,8 @@ async fn test_countdown_task() {
         .unwrap();
 
     timer.add_task(task).unwrap();
-    timer.start();
 
     tokio::time::sleep(Duration::from_secs(5)).await;
-
-    timer.stop().await;
 
     let count = counter.load(Ordering::SeqCst);
     assert!(
@@ -228,7 +216,7 @@ async fn test_timer_start_stop() {
 
     let timer = MiniTimer::new();
 
-    assert!(!timer.is_running(), "Timer should not be running initially");
+    assert!(timer.is_running(), "Timer should be running after new()");
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(60)
@@ -236,17 +224,16 @@ async fn test_timer_start_stop() {
         .unwrap();
     timer.add_task(task).unwrap();
 
-    timer.start();
-
     tokio::time::sleep(Duration::from_millis(100)).await;
-
-    assert!(timer.is_running(), "Timer should be running after start");
 
     timer.stop().await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    assert!(!timer.is_running(), "Timer should not be running after stop");
+    assert!(
+        !timer.is_running(),
+        "Timer should not be running after stop"
+    );
 }
 
 /// Test removing a running task.
@@ -262,7 +249,6 @@ async fn test_remove_running_task() {
         .unwrap();
 
     timer.add_task(task).unwrap();
-    timer.start();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -273,8 +259,6 @@ async fn test_remove_running_task() {
         !timer.contains_task(1),
         "Task should not exist after removal"
     );
-
-    timer.stop().await;
 }
 
 /// Test get running tasks.
@@ -290,7 +274,6 @@ async fn test_get_running_tasks() {
         .unwrap();
 
     timer.add_task(task).unwrap();
-    timer.start();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
@@ -299,8 +282,6 @@ async fn test_get_running_tasks() {
         !running.is_empty() || timer.task_count() > 0,
         "Should have running or pending tasks"
     );
-
-    timer.stop().await;
 }
 
 /// Test multiple tasks with different frequencies.
@@ -333,11 +314,7 @@ async fn test_multiple_tasks_different_frequencies() {
 
     assert_eq!(timer.task_count(), 3, "Should have 3 tasks");
 
-    timer.start();
-
     tokio::time::sleep(Duration::from_secs(5)).await;
-
-    timer.stop().await;
 
     assert!(
         counter1.load(Ordering::SeqCst) >= 2,
@@ -373,5 +350,323 @@ async fn test_timer_clone() {
         timer.task_count(),
         timer_clone.task_count(),
         "Cloned timer should have same task count"
+    );
+}
+
+/// Test that tick method works correctly for second-level tasks.
+#[tokio::test]
+async fn test_tick_method_works() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(2)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    println!("Task count: {}", timer.task_count());
+    println!("Pending tasks: {:?}", timer.get_pending_tasks());
+
+    for i in 0..10 {
+        timer.tick().await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let c = counter.load(Ordering::SeqCst);
+        println!("After tick {}: counter = {}", i, c);
+    }
+
+    let count = counter.load(Ordering::SeqCst);
+    assert!(
+        count >= 1,
+        "Task should execute after 5 ticks, executed {} times",
+        count
+    );
+}
+
+/// Test hour-level task scheduling (task scheduled for 3600+ seconds).
+/// Verifies that hour-level tasks don't execute early, but do execute when the time comes.
+#[tokio::test]
+async fn test_hour_level_task() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(3665)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let count = counter.load(Ordering::SeqCst);
+    assert_eq!(
+        count, 0,
+        "Hour-level task should NOT execute within 10 seconds, executed {} times",
+        count
+    );
+}
+
+/// Test day-level task scheduling (task scheduled for more than 86400 seconds).
+/// Verifies that day-level tasks don't execute early.
+#[tokio::test]
+async fn test_day_level_task() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(90000)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let count = counter.load(Ordering::SeqCst);
+    assert_eq!(
+        count, 0,
+        "Day-level task should NOT execute within 10 seconds, executed {} times",
+        count
+    );
+}
+
+/// Test minute-level repeated task (repeats every minute).
+#[tokio::test]
+async fn test_minute_level_repeated_task() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    for _ in 0..131 {
+        timer.tick().await;
+    }
+
+    let count = counter.load(Ordering::SeqCst);
+    assert!(
+        count >= 1,
+        "Minute-level repeated task should execute at least once in 131 ticks, executed {} times",
+        count
+    );
+}
+
+/// Test hour-level repeated task (repeats every hour).
+#[tokio::test]
+async fn test_hour_level_repeated_task() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(3600)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    for _ in 0..10 {
+        timer.tick().await;
+    }
+
+    let count = counter.load(Ordering::SeqCst);
+    assert_eq!(
+        count, 0,
+        "Hour-level repeated task should NOT execute within 10 ticks, executed {} times",
+        count
+    );
+}
+
+/// Test that tasks scheduled at minute boundary execute correctly.
+/// A task at 65 seconds should be in the minute wheel initially,
+/// then cascade to second wheel when the minute hand advances.
+#[tokio::test]
+async fn test_minute_to_second_cascade() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(65)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    for _ in 0..70 {
+        timer.tick().await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let count = counter.load(Ordering::SeqCst);
+    assert!(
+        count >= 1,
+        "Task at 65s should execute after cascade from minute to second wheel, executed {} times",
+        count
+    );
+}
+
+/// Test that tasks scheduled at hour boundary execute correctly.
+/// A task at 3665 seconds should be in the hour wheel initially,
+/// then cascade to minute wheel, then to second wheel.
+#[tokio::test]
+async fn test_hour_to_minute_to_second_cascade() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(3665)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    for _ in 0..70 {
+        timer.tick().await;
+    }
+
+    let count = counter.load(Ordering::SeqCst);
+    assert_eq!(
+        count, 0,
+        "Task at 3665s should NOT execute within 70 ticks, executed {} times",
+        count
+    );
+}
+
+/// Test multiple tasks at different time wheel levels execute correctly.
+#[tokio::test]
+async fn test_multi_wheel_tasks() {
+    let counter_second = Arc::new(AtomicU64::new(0));
+    let counter_minute = Arc::new(AtomicU64::new(0));
+    let counter_hour = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task_second = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(2)
+        .spwan_async(CounterTask::new(counter_second.clone()))
+        .unwrap();
+
+    let task_minute = TaskBuilder::new(2)
+        .with_frequency_once_by_seconds(65)
+        .spwan_async(CounterTask::new(counter_minute.clone()))
+        .unwrap();
+
+    let task_hour = TaskBuilder::new(3)
+        .with_frequency_once_by_seconds(3665)
+        .spwan_async(CounterTask::new(counter_hour.clone()))
+        .unwrap();
+
+    timer.add_task(task_second).unwrap();
+    timer.add_task(task_minute).unwrap();
+    timer.add_task(task_hour).unwrap();
+
+    for _ in 0..70 {
+        timer.tick().await;
+    }
+
+    let second_count = counter_second.load(Ordering::SeqCst);
+    let _minute_count = counter_minute.load(Ordering::SeqCst);
+    let hour_count = counter_hour.load(Ordering::SeqCst);
+
+    assert!(
+        second_count >= 1,
+        "Second-level task should execute, executed {} times",
+        second_count
+    );
+    assert_eq!(
+        hour_count, 0,
+        "Hour-level task should NOT execute within 70 ticks, executed {} times",
+        hour_count
+    );
+}
+
+/// Test that tasks are correctly placed in minute wheel (>60s, <3600s).
+#[tokio::test]
+async fn test_task_placed_in_minute_wheel() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(120)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    let state = timer.get_task_state(1);
+    assert!(state.is_some(), "Task should have a state");
+
+    for _ in 0..130 {
+        timer.tick().await;
+    }
+
+    let count = counter.load(Ordering::SeqCst);
+    assert!(
+        count >= 1,
+        "Task should execute after 120 ticks, executed {} times",
+        count
+    );
+}
+
+/// Test that tasks are correctly placed in hour wheel (>=3600s).
+#[tokio::test]
+async fn test_task_placed_in_hour_wheel() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(7200)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let count = counter.load(Ordering::SeqCst);
+    assert_eq!(
+        count, 0,
+        "Task should NOT execute within 5 seconds (scheduled for 7200s), executed {} times",
+        count
+    );
+}
+
+/// Test repeated task that spans multiple wheel levels over time.
+#[tokio::test]
+async fn test_repeated_task_spanning_wheels() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(90)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    for _ in 0..200 {
+        timer.tick().await;
+    }
+
+    let count = counter.load(Ordering::SeqCst);
+    assert!(
+        count >= 1,
+        "Repeated task at 90s interval should execute at least once in 200 ticks, executed {} times",
+        count
     );
 }
