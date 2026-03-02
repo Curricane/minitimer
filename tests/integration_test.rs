@@ -1114,3 +1114,75 @@ async fn test_timer_clone_shares_state() {
         "Task should be removed from timer2"
     );
 }
+
+// ============================================================================
+// Advance Task Tests
+// ============================================================================
+
+/// Test advancing a task by a specific duration.
+#[tokio::test]
+async fn test_advance_task_by_duration() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    assert!(timer.contains_task(1), "Task should exist");
+
+    timer.advance_task(1, Some(Duration::from_secs(30))).unwrap();
+
+    assert!(timer.contains_task(1), "Task should still exist after advance");
+}
+
+/// Test triggering a task immediately (None duration).
+#[tokio::test]
+async fn test_advance_task_trigger_immediately() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    timer.advance_task(1, None).unwrap();
+
+    assert!(timer.contains_task(1), "Task should still exist after trigger");
+}
+
+/// Test advancing a non-existent task returns error.
+#[tokio::test]
+async fn test_advance_nonexistent_task() {
+    let timer = MiniTimer::new();
+
+    let result = timer.advance_task(999, Some(Duration::from_secs(30)));
+    assert!(result.is_err(), "Should return error for non-existent task");
+}
+
+/// Test advancing a task beyond its current wait time.
+#[tokio::test]
+async fn test_advance_task_exceed_wait_time() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    timer.advance_task(1, Some(Duration::from_secs(120))).unwrap();
+
+    assert!(timer.contains_task(1), "Task should still exist after advance beyond wait");
+}

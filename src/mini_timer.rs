@@ -137,6 +137,23 @@ impl MiniTimer {
         }
     }
 
+    /// Advances a task's scheduled execution time.
+    ///
+    /// - If `duration` is `None`: triggers the task immediately and schedules the next run
+    /// - If `duration` is `Some(duration)`: advances the task by the specified duration
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to advance
+    /// * `duration` - Optional duration to advance by. `None` means trigger immediately.
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the task was successfully advanced
+    /// * `Err(TaskError)` - If the task doesn't exist
+    pub fn advance_task(&self, task_id: TaskId, duration: Option<std::time::Duration>) -> Result<(), TaskError> {
+        let duration_secs = duration.map(|d| d.as_secs());
+        self.wheel.accelerate_task(task_id, duration_secs)
+    }
+
     /// Stops the timer system.
     ///
     /// This stops the internal timer and sets the running flag to false.

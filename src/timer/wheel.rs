@@ -556,6 +556,57 @@ impl MulitWheel {
             None
         }
     }
+
+    /// Accelerates a task by the specified duration.
+    ///
+    /// - If `duration` is `None`: triggers the task immediately and schedules the next run
+    /// - If `duration` is `Some(duration)`: advances the task by the specified duration
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task to accelerate
+    /// * `duration_secs` - Optional duration in seconds to advance by. `None` means trigger immediately.
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the task was successfully accelerated
+    /// * `Err(TaskError)` - If the task doesn't exist
+    pub fn accelerate_task(&self, task_id: TaskId, duration_secs: Option<u64>) -> Result<(), TaskError> {
+        let mut task = match self.remove_task(task_id) {
+            Some(t) => t,
+            None => return Err(TaskError::TaskNotFound(task_id)),
+        };
+
+        let now = timestamp();
+
+        if let Some(secs) = duration_secs {
+            let current_next = task.frequency.peek_alarm_timestamp()
+                .ok_or(TaskError::TaskNotFound(task_id))?;
+            
+            let new_timestamp = current_next.saturating_sub(secs);
+            
+            if new_timestamp <= now {
+                task.next_alarm_timestamp();
+            } else {
+                let new_alarm_sec = new_timestamp - now;
+                let next_guide = self.cal_next_hand_position(new_alarm_sec);
+                task.set_wheel_position(next_guide);
+                self.add_task(task)?;
+                return Ok(());
+            }
+        } else {
+            task.next_alarm_timestamp();
+        }
+
+        if let Some(next_timestamp) = task.frequency.peek_alarm_timestamp() {
+            let next_alarm_sec = next_timestamp.saturating_sub(now);
+            if next_alarm_sec > 0 {
+                let next_guide = self.cal_next_hand_position(next_alarm_sec);
+                task.set_wheel_position(next_guide);
+                self.add_task(task)?;
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 // Implement remove_task method for Wheel
@@ -1007,5 +1058,66 @@ mod tests {
         };
 
         assert!(guide.is_arrived(30, 15, 5));
+    }
+
+    #[test]
+    fn test_accelerate_task_by_duration() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+        
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spwan_async(TestTaskRunner::new())
+            .unwrap();
+        
+        wheel.add_task(task).unwrap();
+        
+        let original_info = wheel.get_task_tracking_info(1).unwrap();
+        assert_eq!(original_info.wheel_type, WheelType::Minute);
+        
+        wheel.accelerate_task(1, Some(30)).unwrap();
+        
+        assert!(wheel.get_task_tracking_info(1).is_some());
+    }
+
+    #[test]
+    fn test_accelerate_task_trigger_immediately() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+        
+        let task = TaskBuilder::new(2)
+            .with_frequency_repeated_by_seconds(60)
+            .spwan_async(TestTaskRunner::new())
+            .unwrap();
+        
+        wheel.add_task(task).unwrap();
+        
+        wheel.accelerate_task(2, None).unwrap();
+        
+        assert!(wheel.get_task_tracking_info(2).is_some());
+    }
+
+    #[test]
+    fn test_accelerate_task_not_found() {
+        let wheel = MulitWheel::new();
+        let result = wheel.accelerate_task(999, Some(30));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_accelerate_task_exceed_current_wait() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+        
+        let task = TaskBuilder::new(3)
+            .with_frequency_repeated_by_seconds(60)
+            .spwan_async(TestTaskRunner::new())
+            .unwrap();
+        
+        wheel.add_task(task).unwrap();
+        
+        wheel.accelerate_task(3, Some(120)).unwrap();
+        
+        assert!(wheel.get_task_tracking_info(3).is_some());
     }
 }
