@@ -732,10 +732,17 @@ async fn test_add_duplicate_task() {
 
     // Adding task with same ID should succeed (current implementation allows replacement)
     let result = timer.add_task(task2);
-    assert!(result.is_ok(), "Adding task with duplicate ID should be allowed (replaces existing)");
+    assert!(
+        result.is_ok(),
+        "Adding task with duplicate ID should be allowed (replaces existing)"
+    );
 
     // Verify only one task exists
-    assert_eq!(timer.task_count(), 1, "Should have only 1 task after replacement");
+    assert_eq!(
+        timer.task_count(),
+        1,
+        "Should have only 1 task after replacement"
+    );
 }
 
 /// Test removing a non-existent task returns None.
@@ -744,7 +751,10 @@ async fn test_remove_nonexistent_task() {
     let timer = MiniTimer::new();
 
     let removed = timer.remove_task(999);
-    assert!(removed.is_none(), "Removing non-existent task should return None");
+    assert!(
+        removed.is_none(),
+        "Removing non-existent task should return None"
+    );
 }
 
 /// Test querying state of non-existent task returns None.
@@ -753,7 +763,10 @@ async fn test_query_nonexistent_task_state() {
     let timer = MiniTimer::new();
 
     let state = timer.get_task_state(999);
-    assert!(state.is_none(), "Querying non-existent task state should return None");
+    assert!(
+        state.is_none(),
+        "Querying non-existent task state should return None"
+    );
 }
 
 // ============================================================================
@@ -943,7 +956,10 @@ async fn test_failing_task_does_not_crash_timer() {
     tokio::time::sleep(Duration::from_secs(4)).await;
 
     // Verify timer is still running
-    assert!(timer.is_running(), "Timer should still be running after task failures");
+    assert!(
+        timer.is_running(),
+        "Timer should still be running after task failures"
+    );
 
     // Verify task was executed (even though it failed)
     let count = counter.load(Ordering::SeqCst);
@@ -1054,7 +1070,10 @@ async fn test_timer_stop_functionality() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Verify timer is stopped
-    assert!(!timer.is_running(), "Timer should not be running after stop");
+    assert!(
+        !timer.is_running(),
+        "Timer should not be running after stop"
+    );
 }
 
 /// Test timer clone shares state correctly.
@@ -1086,6 +1105,12 @@ async fn test_timer_clone_shares_state() {
     // Remove from one timer, should be removed from both
     timer2.remove_task(1);
 
-    assert!(!timer1.contains_task(1), "Task should be removed from timer1");
-    assert!(!timer2.contains_task(1), "Task should be removed from timer2");
+    assert!(
+        !timer1.contains_task(1),
+        "Task should be removed from timer1"
+    );
+    assert!(
+        !timer2.contains_task(1),
+        "Task should be removed from timer2"
+    );
 }
