@@ -1,7 +1,7 @@
 #![allow(clippy::module_inception)]
 pub mod frequency;
 pub mod runner;
-pub mod task;
+pub(crate) mod task;
 
 /// Unique identifier for a task.
 pub type TaskId = u64;
@@ -35,4 +35,4 @@ pub struct RunningRecord {
 
 pub use runner::TaskRunner;
 
-pub use task::{Task, TaskBuilder, TaskContext};
+pub use task::{Task, TaskBuilder};

@@ -173,7 +173,8 @@ impl TaskBuilder {
 /// Context provided to a task during execution.
 ///
 /// Contains information about the task and execution instance.
-pub struct TaskContext {
+#[allow(dead_code)]
+pub(crate) struct TaskContext {
     pub task_id: TaskId,
     pub record_id: RecordId,
 
