@@ -73,8 +73,8 @@ impl FrequencyState {
     /// The next timestamp when the task should execute, or None if no more executions.
     pub(crate) fn peek_alarm_timestamp(&mut self) -> Option<u64> {
         match self {
-            Self::SecondsRepeated(state) => state.peek().map(|t| *t),
-            Self::SecondsCountDown(_, state) => state.peek().map(|t| *t),
+            Self::SecondsRepeated(state) => state.peek().copied(),
+            Self::SecondsCountDown(_, state) => state.peek().copied(),
         }
     }
 

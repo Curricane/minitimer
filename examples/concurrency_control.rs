@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use minitimer::{TaskBuilder, TaskRunner};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 struct ConcurrentTask {
     task_id: u64,
