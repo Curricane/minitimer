@@ -557,6 +557,28 @@ impl MulitWheel {
         }
     }
 
+    /// Removes a task from the wheel only (preserves tracking info including running records).
+    ///
+    /// This is used by accelerate_task to reschedule a task without losing
+    /// its running records in the task_tracker_map.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task to remove from wheel
+    ///
+    /// # Returns
+    /// The removed task if it existed, None otherwise.
+    fn remove_task_from_wheel_only(&self, task_id: TaskId) -> Option<Task> {
+        let tracking_info = self.task_tracker_map.get(&task_id)?;
+        let wheel_type = tracking_info.wheel_type;
+        let slot_num = tracking_info.slot_num;
+
+        match wheel_type {
+            WheelType::Second => self.sec_wheel.remove_task(task_id, slot_num),
+            WheelType::Minute => self.min_wheel.remove_task(task_id, slot_num),
+            WheelType::Hour => self.hour_wheel.remove_task(task_id, slot_num),
+        }
+    }
+
     /// Accelerates a task by the specified duration.
     ///
     /// - If `duration` is `None`: triggers the task immediately and schedules the next run
@@ -570,7 +592,7 @@ impl MulitWheel {
     /// * `Ok(())` - If the task was successfully accelerated
     /// * `Err(TaskError)` - If the task doesn't exist
     pub fn accelerate_task(&self, task_id: TaskId, duration_secs: Option<u64>) -> Result<(), TaskError> {
-        let mut task = match self.remove_task(task_id) {
+        let mut task = match self.remove_task_from_wheel_only(task_id) {
             Some(t) => t,
             None => return Err(TaskError::TaskNotFound(task_id)),
         };
@@ -589,7 +611,7 @@ impl MulitWheel {
                 let new_alarm_sec = new_timestamp - now;
                 let next_guide = self.cal_next_hand_position(new_alarm_sec);
                 task.set_wheel_position(next_guide);
-                self.add_task(task)?;
+                self.reschedule_task_internal(&task, &next_guide)?;
                 return Ok(());
             }
         } else {
@@ -601,7 +623,30 @@ impl MulitWheel {
             if next_alarm_sec > 0 {
                 let next_guide = self.cal_next_hand_position(next_alarm_sec);
                 task.set_wheel_position(next_guide);
-                self.add_task(task)?;
+                self.reschedule_task_internal(&task, &next_guide)?;
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Reschedules a task to a new wheel position (internal, preserves tracking info).
+    fn reschedule_task_internal(&self, task: &Task, guide: &WheelCascadeGuide) -> Result<(), TaskError> {
+        if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
+            tracking_info.cascade_guide = *guide;
+            
+            if let Some(hour) = guide.hour {
+                tracking_info.wheel_type = WheelType::Hour;
+                tracking_info.slot_num = hour;
+                self.hour_wheel.add_task(task.clone(), hour);
+            } else if let Some(min) = guide.min {
+                tracking_info.wheel_type = WheelType::Minute;
+                tracking_info.slot_num = min;
+                self.min_wheel.add_task(task.clone(), min);
+            } else {
+                tracking_info.wheel_type = WheelType::Second;
+                tracking_info.slot_num = guide.sec;
+                self.sec_wheel.add_task(task.clone(), guide.sec);
             }
         }
         
