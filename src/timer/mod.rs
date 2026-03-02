@@ -1,3 +1,4 @@
+#![allow(clippy::module_inception)]
 mod clock;
 pub mod event;
 pub(crate) mod slot;

@@ -78,7 +78,7 @@ impl TaskBuilder {
     /// * `task_id` - Unique identifier for the task
     pub fn new(task_id: u64) -> Self {
         Self {
-            task_id: task_id,
+            task_id,
             frequency: FrequencySeconds::default(),
             max_concurrency: 1,
         }

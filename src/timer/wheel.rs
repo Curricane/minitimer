@@ -547,14 +547,11 @@ impl MulitWheel {
     pub fn remove_task(&self, task_id: TaskId) -> Option<Task> {
         if let Some((_, tracking_info)) = self.task_tracker_map.remove(&task_id) {
             let tracking_info = tracking_info.clone();
-            // Remove task from corresponding wheel
-            let removed_task = match tracking_info.wheel_type {
+            match tracking_info.wheel_type {
                 WheelType::Second => self.sec_wheel.remove_task(task_id, tracking_info.slot_num),
                 WheelType::Minute => self.min_wheel.remove_task(task_id, tracking_info.slot_num),
                 WheelType::Hour => self.hour_wheel.remove_task(task_id, tracking_info.slot_num),
-            };
-
-            removed_task
+            }
         } else {
             None
         }

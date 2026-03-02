@@ -1,3 +1,4 @@
+#![allow(clippy::module_inception)]
 pub mod frequency;
 pub mod runner;
 pub mod task;
