@@ -43,3 +43,17 @@ jobs:
 
       - name: Run cargo clippy
         run: cargo clippy --workspace --all-features -- -D warnings
+
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run all examples
+        run: |
+          for example in examples/*.rs; do
+            cargo run --example $(basename $example .rs) --quiet
+          done
