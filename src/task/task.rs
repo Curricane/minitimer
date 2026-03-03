@@ -28,6 +28,9 @@ pub struct Task {
     /// The frequency state of the task.
     pub(crate) frequency: FrequencyState,
 
+    /// The original frequency configuration for resetting after acceleration.
+    pub(crate) frequency_config: FrequencySeconds,
+
     /// Maximum concurrent executions for this task.
     pub max_concurrency: usize,
 }
@@ -165,6 +168,7 @@ impl TaskBuilder {
             runner: Arc::new(task_runner),
             cascade_guide: WheelCascadeGuide::default(),
             frequency,
+            frequency_config: self.frequency,
             max_concurrency: self.max_concurrency,
         })
     }

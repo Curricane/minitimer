@@ -137,6 +137,35 @@ impl MiniTimer {
         }
     }
 
+    /// Advances a task's scheduled execution time.
+    ///
+    /// - If `duration` is `None`: triggers the task immediately and schedules the next run
+    /// - If `duration` is `Some(duration)`: advances the task by the specified duration
+    ///
+    /// For repeating tasks, the `reset_frequency` parameter controls whether to reset
+    /// the frequency sequence from the current time:
+    /// - If `true` (default): resets the frequency sequence, ensuring consistent intervals
+    /// - If `false`: preserves the current frequency sequence position
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to advance
+    /// * `duration` - Optional duration to advance by. `None` means trigger immediately.
+    /// * `reset_frequency` - Whether to reset the frequency sequence for repeating tasks (default: true)
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the task was successfully advanced
+    /// * `Err(TaskError)` - If the task doesn't exist
+    pub fn advance_task(
+        &self,
+        task_id: TaskId,
+        duration: Option<std::time::Duration>,
+        reset_frequency: bool,
+    ) -> Result<(), TaskError> {
+        let duration_secs = duration.map(|d| d.as_secs());
+        self.wheel
+            .accelerate_task(task_id, duration_secs, reset_frequency)
+    }
+
     /// Stops the timer system.
     ///
     /// This stops the internal timer and sets the running flag to false.
@@ -173,43 +202,7 @@ impl MiniTimer {
 
                     let arrived_tasks = self.wheel.execute_arrived_tasks();
                     for task in arrived_tasks {
-                        let wheel = self.wheel.clone();
-                        let task_id = task.task_id;
-                        let runner = task.runner.clone();
-                        let cascade_guide = task.cascade_guide;
-                        let frequency = task.frequency;
-                        let max_concurrency = task.max_concurrency;
-
-                        // Try to start task with per-task concurrency control
-                        match wheel.try_start_task(task_id, max_concurrency) {
-                            Some(record_id) => {
-                                // Schedule next execution BEFORE running (start-time scheduling)
-                                let mut task_clone = Task {
-                                    task_id,
-                                    runner: runner.clone(),
-                                    cascade_guide,
-                                    frequency,
-                                    max_concurrency,
-                                };
-                                let _ = wheel.reschedule_task(&mut task_clone);
-
-                                tokio::spawn(async move {
-                                    let _ = runner.run().await;
-                                    wheel.complete_task(task_id, record_id);
-                                });
-                            }
-                            None => {
-                                // Concurrency full for this task, re-add to wheel (will retry next tick)
-                                let task_clone = Task {
-                                    task_id,
-                                    runner,
-                                    cascade_guide,
-                                    frequency,
-                                    max_concurrency,
-                                };
-                                let _ = wheel.add_task(task_clone);
-                            }
-                        }
+                        self.wheel.process_arrived_task(task);
                     }
                 }
                 Ok(TimerEvent::StopTimer) => {

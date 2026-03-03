@@ -6,6 +6,7 @@ use crate::task::{TaskId, task::Task};
 ///
 /// Each slot contains a map of task IDs to tasks that are scheduled
 /// to execute at that particular time position.
+#[derive(Clone)]
 pub(crate) struct Slot {
     pub task_map: HashMap<TaskId, Task>,
 }
@@ -69,14 +70,14 @@ impl Slot {
     /// # Returns
     /// A vector of task IDs that are ready to execute.
     pub(crate) fn arrival_time_tasks(
-        &mut self,
+        &self,
         current_sec: u64,
         current_min: u64,
         current_hour: u64,
     ) -> Vec<TaskId> {
         let mut task_id_vec = vec![];
 
-        for (_, task) in self.task_map.iter_mut() {
+        for (_, task) in self.task_map.iter() {
             if task.is_arrived(current_sec, current_min, current_hour) {
                 task_id_vec.push(task.task_id);
             }

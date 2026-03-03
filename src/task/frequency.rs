@@ -19,6 +19,20 @@ pub enum FrequencySeconds {
     CountDown(u64, u64),
 }
 
+impl FrequencySeconds {
+    /// Returns the interval in seconds for this frequency.
+    ///
+    /// # Returns
+    /// The interval between executions in seconds.
+    pub(crate) fn interval(&self) -> u64 {
+        match self {
+            Self::Once(seconds) => *seconds,
+            Self::Repeated(seconds) => *seconds,
+            Self::CountDown(_, seconds) => *seconds,
+        }
+    }
+}
+
 impl Default for FrequencySeconds {
     fn default() -> FrequencySeconds {
         FrequencySeconds::Once(ONE_MINUTE)
@@ -96,6 +110,29 @@ impl FrequencyState {
             *count = count.saturating_sub(1);
         }
     }
+
+    /// Resets the frequency state from a given timestamp.
+    ///
+    /// This is used when accelerating a task to restart the frequency
+    /// sequence from a new base time.
+    ///
+    /// # Arguments
+    /// * `base_timestamp` - The new base timestamp to start the sequence from
+    /// * `interval` - The interval in seconds between executions
+    pub(crate) fn reset_from_timestamp(&mut self, base_timestamp: u64, interval: u64) {
+        let new_state: SecondsState = ((base_timestamp + interval)..)
+            .step_by(interval as usize)
+            .peekable();
+
+        match self {
+            Self::SecondsRepeated(_) => {
+                *self = Self::SecondsRepeated(new_state);
+            }
+            Self::SecondsCountDown(count, _) => {
+                *self = Self::SecondsCountDown(*count, new_state);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -168,5 +205,57 @@ mod tests {
 
         let peek3 = state.peek_alarm_timestamp().unwrap();
         assert_ne!(peek1, peek3);
+    }
+
+    #[test]
+    fn test_reset_from_timestamp_repeated() {
+        let freq = FrequencySeconds::Repeated(10);
+        let mut state = FrequencyState::from(freq);
+
+        // Advance the state a few times
+        let _ = state.next_alarm_timestamp().unwrap();
+        let _ = state.next_alarm_timestamp().unwrap();
+
+        // Reset from a specific timestamp
+        let reset_base = 1000;
+        state.reset_from_timestamp(reset_base, 10);
+
+        // After reset, the next alarm should be at reset_base + interval
+        let next = state.peek_alarm_timestamp().unwrap();
+        assert_eq!(next, reset_base + 10);
+
+        // Subsequent alarms should follow the new interval
+        let next2 = state.next_alarm_timestamp().unwrap();
+        assert_eq!(next2, reset_base + 10);
+
+        let next3 = state.next_alarm_timestamp().unwrap();
+        assert_eq!(next3, reset_base + 20);
+    }
+
+    #[test]
+    fn test_reset_from_timestamp_countdown() {
+        let freq = FrequencySeconds::CountDown(5, 10);
+        let mut state = FrequencyState::from(freq);
+
+        // Reset from a specific timestamp
+        let reset_base = 2000;
+        state.reset_from_timestamp(reset_base, 10);
+
+        // After reset, the next alarm should be at reset_base + interval
+        let next = state.peek_alarm_timestamp().unwrap();
+        assert_eq!(next, reset_base + 10);
+
+        // Count should be preserved
+        match state {
+            FrequencyState::SecondsCountDown(count, _) => assert_eq!(count, 5),
+            _ => panic!("Expected SecondsCountDown variant"),
+        }
+    }
+
+    #[test]
+    fn test_frequency_seconds_interval() {
+        assert_eq!(FrequencySeconds::Once(30).interval(), 30);
+        assert_eq!(FrequencySeconds::Repeated(60).interval(), 60);
+        assert_eq!(FrequencySeconds::CountDown(3, 15).interval(), 15);
     }
 }
