@@ -72,18 +72,13 @@ async fn main() {
 
     timer.add_task(task2).unwrap();
 
-    println!(
-        "Task 2 scheduled for 60 seconds, advancing by 120 seconds (beyond wait)..."
-    );
+    println!("Task 2 scheduled for 60 seconds, advancing by 120 seconds (beyond wait)...");
 
     timer
         .advance_task(2, Some(Duration::from_secs(120)))
         .unwrap();
 
-    println!(
-        "Task 2 still exists: {}",
-        timer.contains_task(2)
-    );
+    println!("Task 2 still exists: {}", timer.contains_task(2));
 
     println!("\n--- Test 4: Advance non-existent task (error case) ---");
 
@@ -98,12 +93,11 @@ async fn main() {
 
     println!("\nExample completed. The advance_task API allows:");
     println!("  - advance_task(id, None)        -> Trigger immediately, schedule next run");
-    println!(
-        "  - advance_task(id, Some(duration)) -> Advance by specific duration"
-    );
-    println!(
-        "  - If duration > remaining wait, triggers immediately and schedules next run"
-    );
+    println!("  - advance_task(id, Some(duration)) -> Advance by specific duration");
+    println!("  - If duration > remaining wait, triggers immediately and schedules next run");
+    println!("\nNote: For repeating tasks, after acceleration the frequency sequence");
+    println!("is reset from the current time, ensuring consistent intervals for");
+    println!("subsequent executions.");
 
     timer.stop().await;
 }

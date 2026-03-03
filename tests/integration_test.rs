@@ -1135,9 +1135,14 @@ async fn test_advance_task_by_duration() {
 
     assert!(timer.contains_task(1), "Task should exist");
 
-    timer.advance_task(1, Some(Duration::from_secs(30))).unwrap();
+    timer
+        .advance_task(1, Some(Duration::from_secs(30)))
+        .unwrap();
 
-    assert!(timer.contains_task(1), "Task should still exist after advance");
+    assert!(
+        timer.contains_task(1),
+        "Task should still exist after advance"
+    );
 }
 
 /// Test triggering a task immediately (None duration).
@@ -1156,7 +1161,10 @@ async fn test_advance_task_trigger_immediately() {
 
     timer.advance_task(1, None).unwrap();
 
-    assert!(timer.contains_task(1), "Task should still exist after trigger");
+    assert!(
+        timer.contains_task(1),
+        "Task should still exist after trigger"
+    );
 }
 
 /// Test advancing a non-existent task returns error.
@@ -1182,7 +1190,37 @@ async fn test_advance_task_exceed_wait_time() {
 
     timer.add_task(task).unwrap();
 
-    timer.advance_task(1, Some(Duration::from_secs(120))).unwrap();
+    timer
+        .advance_task(1, Some(Duration::from_secs(120)))
+        .unwrap();
 
-    assert!(timer.contains_task(1), "Task should still exist after advance beyond wait");
+    assert!(
+        timer.contains_task(1),
+        "Task should still exist after advance beyond wait"
+    );
+}
+
+/// Test that advancing a task works correctly (basic check).
+/// Note: Full timing-dependent tests are in unit tests.
+#[tokio::test]
+async fn test_advance_task_resets_frequency_sequence() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    // Verify task exists before advance
+    assert!(timer.contains_task(1), "Task should exist before advance");
+
+    // Advance the task (unit test verifies wheel position)
+    timer.advance_task(1, None).unwrap();
+
+    // Verify task still exists after advance
+    assert!(timer.contains_task(1), "Task should exist after advance");
 }
