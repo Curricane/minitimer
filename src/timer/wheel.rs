@@ -4,10 +4,11 @@ use std::sync::{
 };
 
 use dashmap::DashMap;
+use log::warn;
 
 use crate::{
     error::TaskError,
-    task::{RecordId, Task, TaskId, TaskState},
+    task::{RecordId, Task, TaskId, TaskState, frequency::FrequencySeconds},
     timer::slot::Slot,
     utils::timestamp,
 };
@@ -294,7 +295,7 @@ impl Clone for Wheel {
 /// This structure tracks the exact position where a task should be placed
 /// across the three-level time wheel system (second, minute, hour wheels).
 #[derive(Debug, Default, Copy, Clone)]
-pub(crate) struct WheelCascadeGuide {
+pub struct WheelCascadeGuide {
     pub sec: u64,
     pub min: Option<u64>,
     pub hour: Option<u64>,
@@ -342,6 +343,20 @@ pub struct TaskTrackingInfo {
     pub running_records: DashMap<RecordId, TaskState>,
 }
 
+/// Task status information structure.
+///
+/// Contains metadata about a task including its position in the wheel system,
+/// the wheel type it's currently in, and running records for concurrency tracking.
+#[derive(Debug, Clone)]
+pub struct TaskStatus {
+    pub cascade_guide: WheelCascadeGuide,
+    pub wheel_type: WheelType,
+    pub slot_num: u64,
+    pub max_concurrency: usize,
+    pub running_records: Vec<RecordId>,
+    pub frequency_config: FrequencySeconds,
+}
+
 /// Represents the type of wheel a task is currently in.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WheelType {
@@ -369,8 +384,61 @@ impl MulitWheel {
     ///
     /// # Returns
     /// Some(TaskTrackingInfo) if the task exists, None otherwise.
-    pub fn get_task_tracking_info(&self, task_id: TaskId) -> Option<TaskTrackingInfo> {
+    pub(crate) fn task_tracking_info(&self, task_id: TaskId) -> Option<TaskTrackingInfo> {
         self.task_tracker_map.get(&task_id).map(|info| info.clone())
+    }
+
+    /// Gets the task status including frequency configuration.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task
+    ///
+    /// # Returns
+    /// Some(TaskStatus) if the task exists, None otherwise.
+    pub(crate) fn task_status(&self, task_id: TaskId) -> Option<TaskStatus> {
+        let (task, tracking_info) = self.task(task_id)?;
+
+        let frequency_config = task.frequency_config;
+
+        Some(TaskStatus {
+            cascade_guide: tracking_info.cascade_guide,
+            wheel_type: tracking_info.wheel_type,
+            slot_num: tracking_info.slot_num,
+            max_concurrency: tracking_info.max_concurrency,
+            running_records: tracking_info
+                .running_records
+                .iter()
+                .map(|r| *r.key())
+                .collect(),
+            frequency_config,
+        })
+    }
+
+    pub(crate) fn task(&self, task_id: TaskId) -> Option<(Task, TaskTrackingInfo)> {
+        let tracking_info = self.task_tracker_map.get(&task_id)?.clone();
+        let task = match tracking_info.wheel_type {
+            WheelType::Second => self
+                .sec_wheel
+                .slots
+                .get(&tracking_info.slot_num)
+                .and_then(|slot| slot.task_map.get(&task_id).cloned()),
+            WheelType::Minute => self
+                .min_wheel
+                .slots
+                .get(&tracking_info.slot_num)
+                .and_then(|slot| slot.task_map.get(&task_id).cloned()),
+            WheelType::Hour => self
+                .hour_wheel
+                .slots
+                .get(&tracking_info.slot_num)
+                .and_then(|slot| slot.task_map.get(&task_id).cloned()),
+        };
+
+        if task.is_none() {
+            warn!("task not found in wheel but tracking info exists");
+        }
+
+        Some((task?, tracking_info))
     }
 
     /// Get all pending tasks (tasks currently scheduled in the wheel).
@@ -982,7 +1050,7 @@ mod tests {
         wheel.add_task(task).unwrap();
 
         // Verify task tracking information
-        let tracking_info = wheel.get_task_tracking_info(100).unwrap();
+        let tracking_info = wheel.task_tracking_info(100).unwrap();
         assert_eq!(tracking_info.wheel_type, WheelType::Second); // 10 seconds should go to second wheel
     }
 
@@ -1029,7 +1097,7 @@ mod tests {
         wheel.cascade_minute_tasks(); // Use the version that updates tracking
 
         // Verify the tracking information was updated correctly
-        if let Some(updated_info) = wheel.get_task_tracking_info(105) {
+        if let Some(updated_info) = wheel.task_tracking_info(105) {
             // After cascading from minute to second, the task should be in second wheel
             assert_eq!(updated_info.wheel_type, WheelType::Second);
             assert_eq!(updated_info.slot_num, 10); // Based on cascade guide sec value
@@ -1075,7 +1143,7 @@ mod tests {
         wheel.cascade_hour_tasks();
 
         // Verify the task is now tracked as being in minute wheel
-        if let Some(_updated_info) = wheel.get_task_tracking_info(102) {
+        if let Some(_updated_info) = wheel.task_tracking_info(102) {
             // If the task didn't get moved to minute wheel due to round > 0 logic,
             // the tracking would still reflect its current state
             // If moved to minute wheel, wheel_type should be Minute
@@ -1094,14 +1162,14 @@ mod tests {
         wheel.add_task(task).unwrap();
 
         // Verify task exists in tracking
-        assert!(wheel.get_task_tracking_info(103).is_some());
+        assert!(wheel.task_tracking_info(103).is_some());
 
         // Remove task
         let removed_task = wheel.remove_task(103);
         assert!(removed_task.is_some());
 
         // Verify task no longer exists in tracking
-        assert!(wheel.get_task_tracking_info(103).is_none());
+        assert!(wheel.task_tracking_info(103).is_none());
     }
 
     #[test]
@@ -1206,12 +1274,12 @@ mod tests {
 
         wheel.add_task(task).unwrap();
 
-        let original_info = wheel.get_task_tracking_info(1).unwrap();
+        let original_info = wheel.task_tracking_info(1).unwrap();
         assert_eq!(original_info.wheel_type, WheelType::Minute);
 
         wheel.accelerate_task(1, Some(30), true).unwrap();
 
-        assert!(wheel.get_task_tracking_info(1).is_some());
+        assert!(wheel.task_tracking_info(1).is_some());
     }
 
     #[test]
@@ -1228,7 +1296,7 @@ mod tests {
 
         wheel.accelerate_task(2, None, true).unwrap();
 
-        let info = wheel.get_task_tracking_info(2).unwrap();
+        let info = wheel.task_tracking_info(2).unwrap();
         assert_eq!(info.wheel_type, WheelType::Second);
         assert_eq!(info.slot_num, 31);
     }
@@ -1254,6 +1322,6 @@ mod tests {
 
         wheel.accelerate_task(3, Some(120), true).unwrap();
 
-        assert!(wheel.get_task_tracking_info(3).is_some());
+        assert!(wheel.task_tracking_info(3).is_some());
     }
 }

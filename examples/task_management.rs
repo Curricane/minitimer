@@ -43,8 +43,8 @@ async fn main() {
     println!("\n--- Pending tasks: {:?}", timer.get_pending_tasks());
     println!("--- Running tasks: {:?}", timer.get_running_tasks());
 
-    if let Some(state) = timer.get_task_state(1) {
-        println!("\nTask 1 state: {:?}", state);
+    if let Some(status) = timer.task_status(1) {
+        println!("\nTask 1 status: {:?}", status);
     }
 
     println!("\n--- Removing task 2 ---");
@@ -61,8 +61,8 @@ async fn main() {
     tokio::time::sleep(std::time::Duration::from_secs(4)).await;
 
     println!("\n--- After 4 seconds ---");
-    println!("Task 1 state: {:?}", timer.get_task_state(1));
-    println!("Task 3 state: {:?}", timer.get_task_state(3));
+    println!("Task 1 status: {:?}", timer.task_status(1));
+    println!("Task 3 status: {:?}", timer.task_status(3));
     println!("Running tasks: {:?}", timer.get_running_tasks());
 
     println!("\nExample completed.");

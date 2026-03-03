@@ -33,6 +33,7 @@ pub struct RunningRecord {
     pub state: TaskState,
 }
 
+pub use frequency::FrequencySeconds;
 pub use runner::TaskRunner;
 
 pub use task::{Task, TaskBuilder};

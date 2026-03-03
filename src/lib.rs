@@ -6,4 +6,7 @@ pub mod utils;
 
 pub use error::TaskError;
 pub use mini_timer::MiniTimer;
-pub use task::{RecordId, RunningRecord, TaskBuilder, TaskId, TaskRunner, TaskState};
+pub use task::{
+    FrequencySeconds, RecordId, RunningRecord, TaskBuilder, TaskId, TaskRunner, TaskState,
+};
+pub use timer::{TaskStatus, TimerEvent, WheelCascadeGuide, WheelType};

@@ -95,18 +95,17 @@ async fn test_task_state_query() {
 
     timer.add_task(task).unwrap();
 
-    let state = timer.get_task_state(200);
-    assert!(state.is_some(), "Task state should exist for task 200");
-    assert_eq!(
-        state.unwrap(),
-        minitimer::TaskState::Pending,
+    let status = timer.task_status(200);
+    assert!(status.is_some(), "Task status should exist for task 200");
+    assert!(
+        status.as_ref().unwrap().running_records.is_empty(),
         "Task should be in Pending state before execution"
     );
 
-    let non_existent_state = timer.get_task_state(999);
+    let non_existent_status = timer.task_status(999);
     assert!(
-        non_existent_state.is_none(),
-        "Task state should be None for non-existent task"
+        non_existent_status.is_none(),
+        "Task status should be None for non-existent task"
     );
 }
 
@@ -642,8 +641,8 @@ async fn test_task_placed_in_minute_wheel() {
 
     timer.add_task(task).unwrap();
 
-    let state = timer.get_task_state(1);
-    assert!(state.is_some(), "Task should have a state");
+    let status = timer.task_status(1);
+    assert!(status.is_some(), "Task should have a status");
 
     for _ in 0..130 {
         timer.tick().await;
@@ -762,10 +761,10 @@ async fn test_remove_nonexistent_task() {
 async fn test_query_nonexistent_task_state() {
     let timer = MiniTimer::new();
 
-    let state = timer.get_task_state(999);
+    let status = timer.task_status(999);
     assert!(
-        state.is_none(),
-        "Querying non-existent task state should return None"
+        status.is_none(),
+        "Querying non-existent task status should return None"
     );
 }
 
@@ -895,10 +894,9 @@ async fn test_very_long_interval_task() {
     timer.add_task(task).unwrap();
 
     // Verify task is in pending state
-    let state = timer.get_task_state(1);
-    assert_eq!(
-        state,
-        Some(minitimer::TaskState::Pending),
+    let status = timer.task_status(1);
+    assert!(
+        status.is_some() && status.as_ref().unwrap().running_records.is_empty(),
         "Long interval task should be in Pending state"
     );
 
