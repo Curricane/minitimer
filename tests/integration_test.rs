@@ -1136,7 +1136,7 @@ async fn test_advance_task_by_duration() {
     assert!(timer.contains_task(1), "Task should exist");
 
     timer
-        .advance_task(1, Some(Duration::from_secs(30)))
+        .advance_task(1, Some(Duration::from_secs(30)), true)
         .unwrap();
 
     assert!(
@@ -1159,7 +1159,7 @@ async fn test_advance_task_trigger_immediately() {
 
     timer.add_task(task).unwrap();
 
-    timer.advance_task(1, None).unwrap();
+    timer.advance_task(1, None, true).unwrap();
 
     assert!(
         timer.contains_task(1),
@@ -1172,7 +1172,7 @@ async fn test_advance_task_trigger_immediately() {
 async fn test_advance_nonexistent_task() {
     let timer = MiniTimer::new();
 
-    let result = timer.advance_task(999, Some(Duration::from_secs(30)));
+    let result = timer.advance_task(999, Some(Duration::from_secs(30)), true);
     assert!(result.is_err(), "Should return error for non-existent task");
 }
 
@@ -1191,7 +1191,7 @@ async fn test_advance_task_exceed_wait_time() {
     timer.add_task(task).unwrap();
 
     timer
-        .advance_task(1, Some(Duration::from_secs(120)))
+        .advance_task(1, Some(Duration::from_secs(120)), true)
         .unwrap();
 
     assert!(
@@ -1219,7 +1219,7 @@ async fn test_advance_task_resets_frequency_sequence() {
     assert!(timer.contains_task(1), "Task should exist before advance");
 
     // Advance the task (unit test verifies wheel position)
-    timer.advance_task(1, None).unwrap();
+    timer.advance_task(1, None, true).unwrap();
 
     // Verify task still exists after advance
     assert!(timer.contains_task(1), "Task should exist after advance");

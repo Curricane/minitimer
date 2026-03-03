@@ -43,7 +43,7 @@ async fn main() {
     println!("Advancing by 30 seconds...");
 
     timer
-        .advance_task(1, Some(Duration::from_secs(30)))
+        .advance_task(1, Some(Duration::from_secs(30)), true)
         .unwrap();
 
     println!(
@@ -54,7 +54,7 @@ async fn main() {
     println!("\n--- Test 2: Trigger task immediately ---");
     println!("Triggering task 1 immediately (None duration)...");
 
-    timer.advance_task(1, None).unwrap();
+    timer.advance_task(1, None, true).unwrap();
 
     println!(
         "Task 1 still exists after trigger: {}",
@@ -75,14 +75,14 @@ async fn main() {
     println!("Task 2 scheduled for 60 seconds, advancing by 120 seconds (beyond wait)...");
 
     timer
-        .advance_task(2, Some(Duration::from_secs(120)))
+        .advance_task(2, Some(Duration::from_secs(120)), true)
         .unwrap();
 
     println!("Task 2 still exists: {}", timer.contains_task(2));
 
     println!("\n--- Test 4: Advance non-existent task (error case) ---");
 
-    let result = timer.advance_task(999, Some(Duration::from_secs(30)));
+    let result = timer.advance_task(999, Some(Duration::from_secs(30)), true);
 
     match result {
         Ok(_) => println!("Unexpected success!"),

@@ -26,7 +26,7 @@ pub(crate) struct MulitWheel {
     min_wheel: Wheel,
     hour_wheel: Wheel,
 
-    pub(crate) task_tracker_map: DashMap<TaskId, TaskTrackingInfo>,
+    pub(crate) task_tracker_map: Arc<DashMap<TaskId, TaskTrackingInfo>>,
 }
 
 impl MulitWheel {
@@ -36,7 +36,7 @@ impl MulitWheel {
             sec_wheel: Wheel::new(60),
             min_wheel: Wheel::new(60),
             hour_wheel: Wheel::new(24),
-            task_tracker_map: DashMap::new(),
+            task_tracker_map: Arc::new(DashMap::new()),
         }
     }
 
@@ -109,24 +109,24 @@ impl MulitWheel {
     /// is re-added to the wheel to retry on the next tick.
     ///
     /// # Arguments
-    /// * `wheel` - The wheel reference for scheduling and tracking
     /// * `task` - The task to process
-    pub(crate) fn process_arrived_task(wheel: Arc<Self>, task: Task) {
+    pub(crate) fn process_arrived_task(&self, task: Task) {
         let task_id = task.task_id;
         let max_concurrency = task.max_concurrency;
         let runner = task.runner.clone();
 
-        match wheel.try_start_task(task_id, max_concurrency) {
+        match self.try_start_task(task_id, max_concurrency) {
             Some(record_id) => {
                 let mut task_clone = task;
-                wheel.reschedule_task(&mut task_clone);
+                self.reschedule_task(&mut task_clone);
+                let wheel = self.clone();
                 tokio::spawn(async move {
                     let _ = runner.run().await;
                     wheel.complete_task(task_id, record_id);
                 });
             }
             None => {
-                let _ = wheel.add_task(task);
+                let _ = self.add_task(task);
             }
         }
     }
@@ -166,46 +166,39 @@ impl MulitWheel {
 
         let total_seconds = current_second + next_alarm_sec;
         let final_sec = total_seconds % 60;
+        let min_carry = total_seconds / 60;
 
-        let total_minutes = current_minute + (total_seconds / 60);
-        let final_min = total_minutes % 60;
-
-        // Check if there will be a carry from seconds to minutes
-        let has_min_carry = total_seconds >= 60;
-
-        if has_min_carry {
-            // Check if there will be a carry from minutes to hours
-            let has_hour_carry = total_minutes >= 60;
-
-            if has_hour_carry {
-                // There will be carry to hours, we need to calculate rounds as well
-                let total_hours = current_hour + (total_minutes / 60);
-                let final_hour = total_hours % 24;
-                let round = total_hours / 24;
-
-                WheelCascadeGuide {
-                    sec: final_sec,
-                    min: Some(final_min),
-                    hour: Some(final_hour),
-                    round,
-                }
-            } else {
-                // Only minute carry, no hour carry
-                WheelCascadeGuide {
-                    sec: final_sec,
-                    min: Some(final_min),
-                    hour: None,
-                    round: 0,
-                }
-            }
-        } else {
-            // No carry, only seconds level
-            WheelCascadeGuide {
+        if min_carry == 0 {
+            return WheelCascadeGuide {
                 sec: final_sec,
                 min: None,
                 hour: None,
                 round: 0,
-            }
+            };
+        }
+
+        let total_minutes = current_minute + min_carry;
+        let final_min = total_minutes % 60;
+        let hour_carry = total_minutes / 60;
+
+        if hour_carry == 0 {
+            return WheelCascadeGuide {
+                sec: final_sec,
+                min: Some(final_min),
+                hour: None,
+                round: 0,
+            };
+        }
+
+        let total_hours = current_hour + hour_carry;
+        let final_hour = total_hours % 24;
+        let round = total_hours / 24;
+
+        WheelCascadeGuide {
+            sec: final_sec,
+            min: Some(final_min),
+            hour: Some(final_hour),
+            round,
         }
     }
 }
@@ -215,7 +208,7 @@ impl MulitWheel {
 /// Each wheel maintains a "hand" that points to the current position.
 /// Tasks are placed in slots based on their scheduled execution time.
 pub(crate) struct Wheel {
-    slots: DashMap<u64, Slot>,
+    slots: Arc<DashMap<u64, Slot>>,
     hand: Arc<AtomicU64>,
     num_slots: u64,
 }
@@ -223,7 +216,7 @@ pub(crate) struct Wheel {
 impl Wheel {
     /// Creates a new Wheel with the specified number of slots.
     pub(crate) fn new(num_slots: u64) -> Self {
-        let slots = DashMap::new();
+        let slots = Arc::new(DashMap::new());
         for i in 0..num_slots {
             slots.insert(i, Slot::new());
         }
@@ -286,6 +279,16 @@ impl Wheel {
     }
 }
 
+impl Clone for Wheel {
+    fn clone(&self) -> Self {
+        Self {
+            slots: self.slots.clone(),
+            hand: self.hand.clone(),
+            num_slots: self.num_slots,
+        }
+    }
+}
+
 /// Guide for cascade positioning of tasks across multiple time wheels.
 ///
 /// This structure tracks the exact position where a task should be placed
@@ -345,6 +348,17 @@ pub enum WheelType {
     Second,
     Minute,
     Hour,
+}
+
+impl Clone for MulitWheel {
+    fn clone(&self) -> Self {
+        Self {
+            sec_wheel: self.sec_wheel.clone(),
+            min_wheel: self.min_wheel.clone(),
+            hour_wheel: self.hour_wheel.clone(),
+            task_tracker_map: self.task_tracker_map.clone(),
+        }
+    }
 }
 
 impl MulitWheel {
@@ -613,12 +627,18 @@ impl MulitWheel {
     /// - If `duration` is `None`: triggers the task immediately and schedules the next run
     /// - If `duration` is `Some(duration)`: advances the task by the specified duration
     ///
-    /// For repeating tasks, after acceleration the frequency sequence is reset
-    /// from the current time, ensuring consistent intervals for subsequent executions.
+    /// For repeating tasks, the `reset_frequency` parameter controls whether to reset
+    /// the frequency sequence from the current time:
+    /// - If `true`: resets the frequency sequence, ensuring consistent intervals for subsequent executions
+    /// - If `false`: preserves the current frequency sequence position
+    ///
+    /// When the task is ready to execute immediately, it is processed via `process_arrived_task`,
+    /// which handles concurrency control and rescheduling.
     ///
     /// # Arguments
     /// * `task_id` - The unique identifier of the task to accelerate
     /// * `duration_secs` - Optional duration in seconds to advance by. `None` means trigger immediately.
+    /// * `reset_frequency` - Whether to reset the frequency sequence for repeating tasks
     ///
     /// # Returns
     /// * `Ok(())` - If the task was successfully accelerated
@@ -627,6 +647,7 @@ impl MulitWheel {
         &self,
         task_id: TaskId,
         duration_secs: Option<u64>,
+        reset_frequency: bool,
     ) -> Result<(), TaskError> {
         let mut task = match self.remove_task_from_wheel_only(task_id) {
             Some(t) => t,
@@ -635,64 +656,68 @@ impl MulitWheel {
 
         let now = timestamp();
 
-        if let Some(secs) = duration_secs {
-            let current_next = task
-                .frequency
-                .peek_alarm_timestamp()
-                .ok_or(TaskError::TaskNotFound(task_id))?;
+        match duration_secs {
+            Some(secs) => self.accelerate_by_duration(&mut task, secs, now, reset_frequency),
+            None => self.trigger_immediately(&mut task, now, reset_frequency),
+        }
+    }
 
-            let new_timestamp = current_next.saturating_sub(secs);
+    fn accelerate_by_duration(
+        &self,
+        task: &mut Task,
+        secs: u64,
+        now: u64,
+        reset_frequency: bool,
+    ) -> Result<(), TaskError> {
+        let current_next = task
+            .frequency
+            .peek_alarm_timestamp()
+            .ok_or(TaskError::TaskNotFound(task.task_id))?;
 
-            if new_timestamp <= now {
-                // Reset frequency from current time (no need to advance first)
+        let new_timestamp = current_next.saturating_sub(secs);
+
+        if new_timestamp <= now {
+            if reset_frequency {
                 let interval = task.frequency_config.interval();
                 task.frequency.reset_from_timestamp(now, interval);
             } else {
-                // Reschedule to the accelerated time
-                let new_alarm_sec = new_timestamp - now;
-                let next_guide = self.cal_next_hand_position(new_alarm_sec);
-                task.set_wheel_position(next_guide);
-                self.reschedule_task_internal(&task, &next_guide)?;
-                return Ok(());
+                let _ = task.next_alarm_timestamp();
             }
+            self.schedule_for_immediate_execution(task);
         } else {
-            // For immediate trigger: add task to second wheel at current hand position
-            // Skip frequency reset for now - debug to see if this works first
-            let (current_sec, _, _) = self.get_wheel_positions();
-            let immediate_guide = WheelCascadeGuide {
-                round: 0,
-                sec: current_sec,
-                min: None,
-                hour: None,
-            };
-            task.set_wheel_position(immediate_guide);
-            self.reschedule_task_internal(&task, &immediate_guide)?;
-            return Ok(());
-        }
-
-        // Schedule the next execution after acceleration
-        if let Some(next_timestamp) = task.frequency.peek_alarm_timestamp() {
-            let next_alarm_sec = next_timestamp.saturating_sub(now);
-            if next_alarm_sec == 0 {
-                // Task should execute immediately - use wheel's current hand position
-                let (current_sec, _, _) = self.get_wheel_positions();
-                let immediate_guide = WheelCascadeGuide {
-                    round: 0,
-                    sec: current_sec,
-                    min: None,
-                    hour: None,
-                };
-                task.set_wheel_position(immediate_guide);
-                self.reschedule_task_internal(&task, &immediate_guide)?;
-            } else if next_alarm_sec > 0 {
-                let next_guide = self.cal_next_hand_position(next_alarm_sec);
-                task.set_wheel_position(next_guide);
-                self.reschedule_task_internal(&task, &next_guide)?;
-            }
-            // If next_alarm_sec < 0 (shouldn't happen due to saturating_sub), do nothing
+            let new_alarm_sec = new_timestamp - now;
+            let next_guide = self.cal_next_hand_position(new_alarm_sec);
+            task.set_wheel_position(next_guide);
+            self.reschedule_task_internal(task, &next_guide)?;
         }
 
         Ok(())
+    }
+
+    fn trigger_immediately(
+        &self,
+        task: &mut Task,
+        now: u64,
+        reset_frequency: bool,
+    ) -> Result<(), TaskError> {
+        if reset_frequency {
+            let interval = task.frequency_config.interval();
+            task.frequency.reset_from_timestamp(now, interval);
+        }
+        self.schedule_for_immediate_execution(task);
+        Ok(())
+    }
+
+    fn schedule_for_immediate_execution(&self, task: &mut Task) {
+        let (current_sec, _, _) = self.get_wheel_positions();
+        let immediate_guide = WheelCascadeGuide {
+            round: 0,
+            sec: current_sec,
+            min: None,
+            hour: None,
+        };
+        task.set_wheel_position(immediate_guide);
+        let _ = self.reschedule_task_internal(task, &immediate_guide);
     }
 
     /// Reschedules a task to a new wheel position (internal, preserves tracking info).
@@ -1189,7 +1214,7 @@ mod tests {
         let original_info = wheel.get_task_tracking_info(1).unwrap();
         assert_eq!(original_info.wheel_type, WheelType::Minute);
 
-        wheel.accelerate_task(1, Some(30)).unwrap();
+        wheel.accelerate_task(1, Some(30), true).unwrap();
 
         assert!(wheel.get_task_tracking_info(1).is_some());
     }
@@ -1206,7 +1231,7 @@ mod tests {
 
         wheel.add_task(task).unwrap();
 
-        wheel.accelerate_task(2, None).unwrap();
+        wheel.accelerate_task(2, None, true).unwrap();
 
         let info = wheel.get_task_tracking_info(2).unwrap();
         assert_eq!(info.wheel_type, WheelType::Second);
@@ -1216,7 +1241,7 @@ mod tests {
     #[test]
     fn test_accelerate_task_not_found() {
         let wheel = MulitWheel::new();
-        let result = wheel.accelerate_task(999, Some(30));
+        let result = wheel.accelerate_task(999, Some(30), true);
         assert!(result.is_err());
     }
 
@@ -1232,7 +1257,7 @@ mod tests {
 
         wheel.add_task(task).unwrap();
 
-        wheel.accelerate_task(3, Some(120)).unwrap();
+        wheel.accelerate_task(3, Some(120), true).unwrap();
 
         assert!(wheel.get_task_tracking_info(3).is_some());
     }

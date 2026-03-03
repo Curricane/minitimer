@@ -142,12 +142,15 @@ impl MiniTimer {
     /// - If `duration` is `None`: triggers the task immediately and schedules the next run
     /// - If `duration` is `Some(duration)`: advances the task by the specified duration
     ///
-    /// For repeating tasks, after acceleration the frequency sequence is reset
-    /// from the current time, ensuring consistent intervals for subsequent executions.
+    /// For repeating tasks, the `reset_frequency` parameter controls whether to reset
+    /// the frequency sequence from the current time:
+    /// - If `true` (default): resets the frequency sequence, ensuring consistent intervals
+    /// - If `false`: preserves the current frequency sequence position
     ///
     /// # Arguments
     /// * `task_id` - The ID of the task to advance
     /// * `duration` - Optional duration to advance by. `None` means trigger immediately.
+    /// * `reset_frequency` - Whether to reset the frequency sequence for repeating tasks (default: true)
     ///
     /// # Returns
     /// * `Ok(())` - If the task was successfully advanced
@@ -156,9 +159,11 @@ impl MiniTimer {
         &self,
         task_id: TaskId,
         duration: Option<std::time::Duration>,
+        reset_frequency: bool,
     ) -> Result<(), TaskError> {
         let duration_secs = duration.map(|d| d.as_secs());
-        self.wheel.accelerate_task(task_id, duration_secs)
+        self.wheel
+            .accelerate_task(task_id, duration_secs, reset_frequency)
     }
 
     /// Stops the timer system.
@@ -197,7 +202,7 @@ impl MiniTimer {
 
                     let arrived_tasks = self.wheel.execute_arrived_tasks();
                     for task in arrived_tasks {
-                        MulitWheel::process_arrived_task(self.wheel.clone(), task);
+                        self.wheel.process_arrived_task(task);
                     }
                 }
                 Ok(TimerEvent::StopTimer) => {
