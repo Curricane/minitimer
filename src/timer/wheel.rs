@@ -355,6 +355,8 @@ pub struct TaskStatus {
     pub max_concurrency: usize,
     pub running_records: Vec<RecordId>,
     pub frequency_config: FrequencySeconds,
+    /// The number of seconds remaining until the next execution.
+    pub time_to_next_run: u64,
 }
 
 /// Represents the type of wheel a task is currently in.
@@ -399,6 +401,7 @@ impl MulitWheel {
         let (task, tracking_info) = self.task(task_id)?;
 
         let frequency_config = task.frequency_config;
+        let time_to_next_run = self.calculate_next_run_seconds(&tracking_info.cascade_guide);
 
         Some(TaskStatus {
             cascade_guide: tracking_info.cascade_guide,
@@ -411,7 +414,39 @@ impl MulitWheel {
                 .map(|r| *r.key())
                 .collect(),
             frequency_config,
+            time_to_next_run,
         })
+    }
+
+    /// Calculates the number of seconds until the next execution.
+    ///
+    /// # Arguments
+    /// * `guide` - The wheel cascade guide containing task position info
+    ///
+    /// # Returns
+    /// The number of seconds remaining until the task's next execution.
+    fn calculate_next_run_seconds(&self, guide: &WheelCascadeGuide) -> u64 {
+        let (current_sec, current_min, current_hour) = self.get_wheel_positions();
+
+        // Calculate target time in seconds from the cascade guide
+        let target_sec = guide.sec;
+        let target_min = guide.min.unwrap_or(0);
+        let target_hour = guide.hour.unwrap_or(0);
+
+        // Convert current and target times to total seconds
+        let current_total = current_hour * 3600 + current_min * 60 + current_sec;
+        let target_total = target_hour * 3600 + target_min * 60 + target_sec;
+
+        // Calculate the difference considering the round
+        let wheel_capacity = 24 * 3600; // 24 hours in seconds
+        let round_seconds = guide.round * wheel_capacity;
+
+        if target_total >= current_total {
+            (target_total - current_total) + round_seconds
+        } else {
+            // Target is on the next day/cycle
+            (wheel_capacity - current_total + target_total) + round_seconds
+        }
     }
 
     pub(crate) fn task(&self, task_id: TaskId) -> Option<(Task, TaskTrackingInfo)> {
