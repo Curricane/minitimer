@@ -1526,7 +1526,10 @@ mod tests {
         // Current: 10*3600 + 30*60 + 0 = 37800
         // Target: 0*3600 + 35*60 + 0 = 2100
         // Since target < current, wrap around: 86400 - 37800 + 2100 = 50700 seconds
-        assert_eq!(status.time_to_next_run, 50700,
-            "Expected time_to_next_run to be 50700 seconds, got {}", status.time_to_next_run);
+        assert_eq!(
+            status.time_to_next_run, 50700,
+            "Expected time_to_next_run to be 50700 seconds, got {}",
+            status.time_to_next_run
+        );
     }
 }
