@@ -5,8 +5,8 @@ use std::time::Duration;
 use async_channel::{Receiver, Sender, bounded};
 
 use crate::error::TaskError;
-use crate::task::{Task, TaskId, TaskState};
-use crate::timer::wheel::MulitWheel;
+use crate::task::{Task, TaskId};
+use crate::timer::wheel::{MulitWheel, TaskStatus};
 use crate::timer::{Timer, TimerEvent};
 
 /// Main timer system for scheduling and executing tasks.
@@ -89,7 +89,7 @@ impl MiniTimer {
     /// # Returns
     /// `true` if the task exists, `false` otherwise.
     pub fn contains_task(&self, task_id: TaskId) -> bool {
-        self.wheel.get_task_tracking_info(task_id).is_some()
+        self.wheel.task_tracking_info(task_id).is_some()
     }
 
     /// Gets the total number of tasks in the timer system.
@@ -116,25 +116,16 @@ impl MiniTimer {
         self.wheel.get_running_tasks()
     }
 
-    /// Gets the current state of a task.
+    /// Gets the current status of a task.
     ///
     /// # Arguments
     /// * `task_id` - The ID of the task to check
     ///
     /// # Returns
-    /// * `Some(TaskState::Running)` - If the task is currently running
-    /// * `Some(TaskState::Pending)` - If the task is scheduled but not running
+    /// * `Some(TaskStatus)` - If the task exists, containing all tracking information
     /// * `None` - If the task doesn't exist
-    pub fn get_task_state(&self, task_id: TaskId) -> Option<TaskState> {
-        if let Some(tracker) = self.wheel.task_tracker_map.get(&task_id) {
-            if !tracker.running_records.is_empty() {
-                Some(TaskState::Running)
-            } else {
-                Some(TaskState::Pending)
-            }
-        } else {
-            None
-        }
+    pub fn task_status(&self, task_id: TaskId) -> Option<TaskStatus> {
+        self.wheel.task_status(task_id)
     }
 
     /// Advances a task's scheduled execution time.
