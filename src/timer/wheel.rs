@@ -355,6 +355,8 @@ pub struct TaskStatus {
     pub max_concurrency: usize,
     pub running_records: Vec<RecordId>,
     pub frequency_config: FrequencySeconds,
+    /// The number of seconds remaining until the next execution.
+    pub time_to_next_run: u64,
 }
 
 /// Represents the type of wheel a task is currently in.
@@ -399,6 +401,7 @@ impl MulitWheel {
         let (task, tracking_info) = self.task(task_id)?;
 
         let frequency_config = task.frequency_config;
+        let time_to_next_run = self.calculate_next_run_seconds(&tracking_info.cascade_guide);
 
         Some(TaskStatus {
             cascade_guide: tracking_info.cascade_guide,
@@ -411,7 +414,39 @@ impl MulitWheel {
                 .map(|r| *r.key())
                 .collect(),
             frequency_config,
+            time_to_next_run,
         })
+    }
+
+    /// Calculates the number of seconds until the next execution.
+    ///
+    /// # Arguments
+    /// * `guide` - The wheel cascade guide containing task position info
+    ///
+    /// # Returns
+    /// The number of seconds remaining until the task's next execution.
+    fn calculate_next_run_seconds(&self, guide: &WheelCascadeGuide) -> u64 {
+        let (current_sec, current_min, current_hour) = self.get_wheel_positions();
+
+        // Calculate target time in seconds from the cascade guide
+        let target_sec = guide.sec;
+        let target_min = guide.min.unwrap_or(0);
+        let target_hour = guide.hour.unwrap_or(0);
+
+        // Convert current and target times to total seconds
+        let current_total = current_hour * 3600 + current_min * 60 + current_sec;
+        let target_total = target_hour * 3600 + target_min * 60 + target_sec;
+
+        // Calculate the difference considering the round
+        let wheel_capacity = 24 * 3600; // 24 hours in seconds
+        let round_seconds = guide.round * wheel_capacity;
+
+        if target_total >= current_total {
+            (target_total - current_total) + round_seconds
+        } else {
+            // Target is on the next day/cycle
+            (wheel_capacity - current_total + target_total) + round_seconds
+        }
     }
 
     pub(crate) fn task(&self, task_id: TaskId) -> Option<(Task, TaskTrackingInfo)> {
@@ -1323,5 +1358,178 @@ mod tests {
         wheel.accelerate_task(3, Some(120), true).unwrap();
 
         assert!(wheel.task_tracking_info(3).is_some());
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_same_time() {
+        let wheel = MulitWheel::new();
+        // Set current time to 10:30:45
+        wheel.set_wheel_positions(45, 30, 10);
+
+        // Target time is exactly the same as current time
+        let guide = WheelCascadeGuide {
+            sec: 45,
+            min: Some(30),
+            hour: Some(10),
+            round: 0,
+        };
+
+        // Should return 0 seconds (task should execute immediately)
+        let result = wheel.calculate_next_run_seconds(&guide);
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_later_same_day() {
+        let wheel = MulitWheel::new();
+        // Set current time to 10:30:45
+        wheel.set_wheel_positions(45, 30, 10);
+
+        // Target time is 10:35:30 (4 minutes 45 seconds later)
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(35),
+            hour: Some(10),
+            round: 0,
+        };
+
+        // Expected: (10*3600 + 35*60 + 30) - (10*3600 + 30*60 + 45) = 285 seconds
+        let result = wheel.calculate_next_run_seconds(&guide);
+        assert_eq!(result, 285);
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_next_day() {
+        let wheel = MulitWheel::new();
+        // Set current time to 23:59:50
+        wheel.set_wheel_positions(50, 59, 23);
+
+        // Target time is 00:00:10 (next day, 20 seconds later)
+        let guide = WheelCascadeGuide {
+            sec: 10,
+            min: Some(0),
+            hour: Some(0),
+            round: 0,
+        };
+
+        // Expected: (24*3600 - 86390 + 10) = 20 seconds
+        let result = wheel.calculate_next_run_seconds(&guide);
+        assert_eq!(result, 20);
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_with_round() {
+        let wheel = MulitWheel::new();
+        // Set current time to 10:30:45
+        wheel.set_wheel_positions(45, 30, 10);
+
+        // Target time is same as current but with 1 round (next day)
+        let guide = WheelCascadeGuide {
+            sec: 45,
+            min: Some(30),
+            hour: Some(10),
+            round: 1,
+        };
+
+        // Expected: 0 + 1 * 24 * 3600 = 86400 seconds (1 day)
+        let result = wheel.calculate_next_run_seconds(&guide);
+        assert_eq!(result, 86400);
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_with_multiple_rounds() {
+        let wheel = MulitWheel::new();
+        // Set current time to 12:00:00
+        wheel.set_wheel_positions(0, 0, 12);
+
+        // Target time with 2 rounds (2 days later)
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(15),
+            hour: Some(14),
+            round: 2,
+        };
+
+        // Expected: (14*3600 + 15*60 + 30 - 12*3600) + 2 * 86400
+        // = (51330 - 43200) + 172800 = 8130 + 172800 = 180930 seconds
+        let result = wheel.calculate_next_run_seconds(&guide);
+        assert_eq!(result, 180930);
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_second_only() {
+        let wheel = MulitWheel::new();
+        // Set current time to 10:30:45
+        wheel.set_wheel_positions(45, 30, 10);
+
+        // Target with only seconds specified (min and hour are None, treated as 0)
+        let guide = WheelCascadeGuide {
+            sec: 50,
+            min: None,
+            hour: None,
+            round: 0,
+        };
+
+        // Current: 10*3600 + 30*60 + 45 = 37845
+        // Target: 0*3600 + 0*60 + 50 = 50
+        // Since target < current, wrap around: 86400 - 37845 + 50 = 48605 seconds
+        let result = wheel.calculate_next_run_seconds(&guide);
+        assert_eq!(result, 48605);
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_minute_only() {
+        let wheel = MulitWheel::new();
+        // Set current time to 10:30:45
+        wheel.set_wheel_positions(45, 30, 10);
+
+        // Target with seconds and minutes, but no hour
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(35),
+            hour: None,
+            round: 0,
+        };
+
+        // Current: 10*3600 + 30*60 + 45 = 37845
+        // Target: 0*3600 + 35*60 + 30 = 2130
+        // Since target < current, wrap around: 86400 - 37845 + 2130 = 50685 seconds
+        let result = wheel.calculate_next_run_seconds(&guide);
+        assert_eq!(result, 50685);
+    }
+
+    #[test]
+    fn test_task_status_time_to_next_run() {
+        let wheel = MulitWheel::new();
+        // Set current time to 10:30:00
+        wheel.set_wheel_positions(0, 30, 10);
+
+        // Create a task that runs in 5 minutes (300 seconds)
+        let task = TaskBuilder::new(200)
+            .with_frequency_once_by_seconds(300)
+            .spwan_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        // Get task status and verify time_to_next_run
+        let status = wheel.task_status(200).unwrap();
+
+        // Verify the cascade_guide has expected values
+        // 300 seconds from 10:30:00 should be 35 minutes (no hour since it's within same hour)
+        assert_eq!(status.cascade_guide.sec, 0);
+        assert_eq!(status.cascade_guide.min, Some(35));
+        assert_eq!(status.cascade_guide.hour, None); // No hour since it's within the same hour
+        assert_eq!(status.cascade_guide.round, 0);
+
+        // time_to_next_run should be exactly 300 seconds (5 minutes)
+        // Current: 10*3600 + 30*60 + 0 = 37800
+        // Target: 0*3600 + 35*60 + 0 = 2100
+        // Since target < current, wrap around: 86400 - 37800 + 2100 = 50700 seconds
+        assert_eq!(
+            status.time_to_next_run, 50700,
+            "Expected time_to_next_run to be 50700 seconds, got {}",
+            status.time_to_next_run
+        );
     }
 }

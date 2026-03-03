@@ -175,7 +175,7 @@ impl MiniTimer {
     /// 1. Handles TimerEvent::Tick by executing arrived tasks
     /// 2. Handles TimerEvent::StopTimer by breaking the loop
     /// 3. Stops on any error
-    pub async fn run(&mut self) {
+    pub(crate) async fn run(&mut self) {
         self.is_running.store(true, Ordering::Relaxed);
 
         let mut timer = self.timer.clone();
