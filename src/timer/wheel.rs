@@ -104,11 +104,13 @@ impl MulitWheel {
     /// Processes an arrived task: tries to start it with concurrency control,
     /// or re-adds it to the wheel if concurrency limit is reached.
     ///
-    /// # Arguments
-    /// * `task` - The task to process
+    /// If concurrency is available, the task is spawned as an async task and
+    /// rescheduled for its next execution. If concurrency is full, the task
+    /// is re-added to the wheel to retry on the next tick.
     ///
-    /// # Returns
-    /// `Some((task_id, runner, record_id))` if task was started, `None` if concurrency full
+    /// # Arguments
+    /// * `wheel` - The wheel reference for scheduling and tracking
+    /// * `task` - The task to process
     pub(crate) fn process_arrived_task(wheel: Arc<Self>, task: Task) {
         let task_id = task.task_id;
         let max_concurrency = task.max_concurrency;
