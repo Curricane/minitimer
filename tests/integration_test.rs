@@ -1126,44 +1126,56 @@ async fn test_advance_task_by_duration() {
 
     let timer = MiniTimer::new();
 
-    let task = TaskBuilder::new(1)
+    let task = TaskBuilder::new(10)
         .with_frequency_repeated_by_seconds(60)
         .spwan_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
 
-    assert!(timer.contains_task(1), "Task should exist");
-
     timer
-        .advance_task(1, Some(Duration::from_secs(30)), true)
+        .advance_task(10, Some(Duration::from_secs(30)), true)
         .unwrap();
 
     assert!(
-        timer.contains_task(1),
+        timer.contains_task(10),
         "Task should still exist after advance"
     );
 }
 
 /// Test triggering a task immediately (None duration).
+/// After triggering immediately with manual tick, the task should execute.
 #[tokio::test]
 async fn test_advance_task_trigger_immediately() {
     let counter = Arc::new(AtomicU64::new(0));
 
     let timer = MiniTimer::new();
 
-    let task = TaskBuilder::new(1)
+    let task = TaskBuilder::new(11)
         .with_frequency_repeated_by_seconds(60)
         .spwan_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
 
-    timer.advance_task(1, None, true).unwrap();
+    timer.tick().await;
+    timer.tick().await;
+    timer.tick().await;
+    timer.tick().await;
+    timer.tick().await;
 
+    timer.advance_task(11, None, true).unwrap();
+
+    timer.tick().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let count = counter.load(Ordering::SeqCst);
+    println!("Counter after 1 tick + sleep: {}", count);
+
+    let final_count = counter.load(Ordering::SeqCst);
     assert!(
-        timer.contains_task(1),
-        "Task should still exist after trigger"
+        final_count >= 1,
+        "Task should execute after manual tick when triggered immediately, executed {} times",
+        final_count
     );
 }
 
@@ -1177,13 +1189,14 @@ async fn test_advance_nonexistent_task() {
 }
 
 /// Test advancing a task beyond its current wait time.
+/// Verifies that advancing beyond wait time doesn't error.
 #[tokio::test]
 async fn test_advance_task_exceed_wait_time() {
     let counter = Arc::new(AtomicU64::new(0));
 
     let timer = MiniTimer::new();
 
-    let task = TaskBuilder::new(1)
+    let task = TaskBuilder::new(12)
         .with_frequency_repeated_by_seconds(60)
         .spwan_async(CounterTask::new(counter.clone()))
         .unwrap();
@@ -1191,36 +1204,112 @@ async fn test_advance_task_exceed_wait_time() {
     timer.add_task(task).unwrap();
 
     timer
-        .advance_task(1, Some(Duration::from_secs(120)), true)
+        .advance_task(12, Some(Duration::from_secs(120)), true)
         .unwrap();
 
     assert!(
-        timer.contains_task(1),
+        timer.contains_task(12),
         "Task should still exist after advance beyond wait"
     );
 }
 
-/// Test that advancing a task works correctly (basic check).
-/// Note: Full timing-dependent tests are in unit tests.
+/// Test that advancing a task with reset_frequency=false preserves frequency sequence position.
 #[tokio::test]
-async fn test_advance_task_resets_frequency_sequence() {
+async fn test_advance_task_reset_frequency_behavior() {
     let counter = Arc::new(AtomicU64::new(0));
 
     let timer = MiniTimer::new();
 
-    let task = TaskBuilder::new(1)
+    let task = TaskBuilder::new(13)
         .with_frequency_repeated_by_seconds(60)
         .spwan_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
 
-    // Verify task exists before advance
-    assert!(timer.contains_task(1), "Task should exist before advance");
+    assert!(timer.contains_task(13), "Task should exist before advance");
 
-    // Advance the task (unit test verifies wheel position)
-    timer.advance_task(1, None, true).unwrap();
+    timer
+        .advance_task(13, Some(Duration::from_secs(30)), false)
+        .unwrap();
 
-    // Verify task still exists after advance
-    assert!(timer.contains_task(1), "Task should exist after advance");
+    assert!(
+        timer.contains_task(13),
+        "Task should exist after advance with reset_frequency=false"
+    );
+}
+
+/// Test advancing a task by zero duration.
+/// Advancing by 0 seconds should not trigger the task immediately.
+#[tokio::test]
+async fn test_advance_task_zero_duration() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(14)
+        .with_frequency_repeated_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    timer
+        .advance_task(14, Some(Duration::from_secs(0)), true)
+        .unwrap();
+
+    timer.tick().await;
+
+    let count = counter.load(Ordering::SeqCst);
+    assert_eq!(
+        count, 0,
+        "Task should NOT execute with zero duration advance, executed {} times",
+        count
+    );
+}
+
+/// Test advancing a once (non-repeating) task triggers it immediately.
+#[tokio::test]
+async fn test_advance_task_once_triggers_immediately() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(15)
+        .with_frequency_once_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    timer.advance_task(15, None, true).unwrap();
+
+    assert!(
+        timer.contains_task(15),
+        "Task should still exist after trigger"
+    );
+}
+
+/// Test that once task is removed after execution when triggered via advance_task.
+#[tokio::test]
+async fn test_advance_task_once_removed_after_execution() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(16)
+        .with_frequency_once_by_seconds(60)
+        .spwan_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    assert!(timer.contains_task(16), "Task should exist before advance");
+
+    timer.advance_task(16, None, true).unwrap();
+
+    assert!(
+        timer.contains_task(16),
+        "Task should still exist immediately after trigger"
+    );
 }

@@ -674,18 +674,12 @@ impl MulitWheel {
             .peek_alarm_timestamp()
             .ok_or(TaskError::TaskNotFound(task.task_id))?;
 
-        let new_timestamp = current_next.saturating_sub(secs);
+        let remaining_wait = current_next.saturating_sub(now);
 
-        if new_timestamp <= now {
-            if reset_frequency {
-                let interval = task.frequency_config.interval();
-                task.frequency.reset_from_timestamp(now, interval);
-            } else {
-                let _ = task.next_alarm_timestamp();
-            }
-            self.schedule_for_immediate_execution(task);
+        if secs >= remaining_wait {
+            self.trigger_immediately(task, now, reset_frequency)?;
         } else {
-            let new_alarm_sec = new_timestamp - now;
+            let new_alarm_sec = remaining_wait - secs;
             let next_guide = self.cal_next_hand_position(new_alarm_sec);
             task.set_wheel_position(next_guide);
             self.reschedule_task_internal(task, &next_guide)?;
@@ -710,9 +704,10 @@ impl MulitWheel {
 
     fn schedule_for_immediate_execution(&self, task: &mut Task) {
         let (current_sec, _, _) = self.get_wheel_positions();
+        let next_sec = (current_sec + 1) % 60;
         let immediate_guide = WheelCascadeGuide {
             round: 0,
-            sec: current_sec,
+            sec: next_sec,
             min: None,
             hour: None,
         };
@@ -1235,7 +1230,7 @@ mod tests {
 
         let info = wheel.get_task_tracking_info(2).unwrap();
         assert_eq!(info.wheel_type, WheelType::Second);
-        assert_eq!(info.slot_num, 30);
+        assert_eq!(info.slot_num, 31);
     }
 
     #[test]
