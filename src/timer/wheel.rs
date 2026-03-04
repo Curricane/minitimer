@@ -8,7 +8,10 @@ use log::warn;
 
 use crate::{
     error::TaskError,
-    task::{RecordId, Task, TaskId, TaskState, frequency::FrequencySeconds},
+    task::{
+        RecordId, Task, TaskId, TaskState,
+        frequency::{FrequencySeconds, FrequencyState},
+    },
     timer::slot::Slot,
     utils::timestamp,
 };
@@ -139,13 +142,29 @@ impl MulitWheel {
     ///
     /// Returns `true` if the task was successfully rescheduled, `false` otherwise.
     pub(crate) fn reschedule_task(&self, task: &mut Task) -> bool {
-        if let Some(next_timestamp) = task.next_alarm_timestamp() {
-            let next_alarm_sec = next_timestamp.saturating_sub(timestamp());
-            if next_alarm_sec > 0 {
-                let next_guide = self.cal_next_hand_position(next_alarm_sec);
-                task.set_wheel_position(next_guide);
-                let _ = self.add_task(task.clone());
-                return true;
+        match &task.frequency {
+            FrequencyState::SecondsRepeated(_) => {
+                // For repeated tasks, let add_task handle advancing the frequency state
+                // to avoid double-advancing which causes incorrect time_to_next_run
+                let has_next = task.frequency.peek_alarm_timestamp().is_some();
+                if has_next {
+                    let _ = self.add_task(task.clone());
+                    return true;
+                }
+            }
+            FrequencyState::SecondsCountDown(_, _) => {
+                // For countdown tasks, maintain the original behavior:
+                // advance state here, then add_task will advance again.
+                // This ensures countdown tasks execute the correct number of times.
+                if let Some(next_timestamp) = task.next_alarm_timestamp() {
+                    let next_alarm_sec = next_timestamp.saturating_sub(timestamp());
+                    if next_alarm_sec > 0 {
+                        let next_guide = self.cal_next_hand_position(next_alarm_sec);
+                        task.set_wheel_position(next_guide);
+                        let _ = self.add_task(task.clone());
+                        return true;
+                    }
+                }
             }
         }
         false
@@ -772,12 +791,11 @@ impl MulitWheel {
         now: u64,
         reset_frequency: bool,
     ) -> Result<(), TaskError> {
-        let current_next = task
-            .frequency
-            .peek_alarm_timestamp()
-            .ok_or(TaskError::TaskNotFound(task.task_id))?;
-
-        let remaining_wait = current_next.saturating_sub(now);
+        // Calculate remaining wait time based on the task's current wheel position
+        // instead of using frequency.peek_alarm_timestamp() which returns the NEXT
+        // execution time after the current one (frequency state was already advanced
+        // when the task was added to the wheel).
+        let remaining_wait = self.calculate_next_run_seconds(&task.cascade_guide);
 
         if secs >= remaining_wait {
             self.trigger_immediately(task, now, reset_frequency)?;
