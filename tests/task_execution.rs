@@ -79,7 +79,7 @@ async fn test_countdown_task() {
 
     let count = counter.load(Ordering::SeqCst);
     assert!(
-        count >= 1 && count <= 4,
+        (1..=4).contains(&count),
         "Countdown task should execute limited times, executed {} times",
         count
     );

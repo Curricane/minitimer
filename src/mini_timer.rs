@@ -160,11 +160,12 @@ impl MiniTimer {
     /// Updates an existing task with a new Task.
     ///
     /// This replaces the existing task with a new one, preserving the task_id
-    /// but using the new task's frequency, concurrency, and runner settings.
+    /// specified by the `task_id` parameter. The `task_id` field in `new_task`
+    /// is ignored and will be overwritten by the `task_id` parameter.
     ///
     /// # Arguments
     /// * `task_id` - The ID of the task to update
-    /// * `new_task` - The new task to replace the existing one
+    /// * `new_task` - The new task to replace the existing one (its task_id field will be ignored)
     ///
     /// # Returns
     /// * `Ok(())` - If the task was successfully updated

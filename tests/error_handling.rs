@@ -4,7 +4,7 @@
 //! non-existent tasks, and invalid operations.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use minitimer::MiniTimer;
 use minitimer::task::TaskBuilder;

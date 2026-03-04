@@ -243,11 +243,7 @@ async fn test_advance_task_zero_duration() {
 
     // Advancing by 0 should not change the scheduled time significantly
     // (may have small variance due to timing)
-    let time_diff = if initial_time_to_next > status_after.time_to_next_run {
-        initial_time_to_next - status_after.time_to_next_run
-    } else {
-        status_after.time_to_next_run - initial_time_to_next
-    };
+    let time_diff = initial_time_to_next.abs_diff(status_after.time_to_next_run);
 
     assert!(
         time_diff <= 2,

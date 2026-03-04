@@ -4,7 +4,7 @@
 //! of tasks and rapid operations.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use minitimer::MiniTimer;
 use minitimer::task::TaskBuilder;
@@ -67,7 +67,7 @@ async fn test_rapid_add_remove_operations() {
     // Should have approximately 50 tasks remaining
     let count = timer.task_count();
     assert!(
-        count <= 100 && count >= 50,
+        (50..=100).contains(&count),
         "Should have between 50-100 tasks after rapid add/remove, found {}",
         count
     );
