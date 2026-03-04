@@ -1024,7 +1024,7 @@ mod tests {
         // Add a task to minute wheel slot 0
         let task = TaskBuilder::new(1)
             .with_frequency_once_by_seconds(60)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
         multi_wheel.min_wheel.add_task(task, 0);
 
@@ -1061,7 +1061,7 @@ mod tests {
         // Add a task to hour wheel slot 0 (last hour of the day)
         let mut task = TaskBuilder::new(2)
             .with_frequency_once_by_seconds(3600)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         // Set the task's wheel position to simulate it being at the end of the day
@@ -1096,7 +1096,7 @@ mod tests {
         let wheel = MulitWheel::new();
         let task = TaskBuilder::new(100)
             .with_frequency_once_by_seconds(10)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         // Add task to wheel
@@ -1114,7 +1114,7 @@ mod tests {
         // Manually create a task and add it to minute wheel slot 5
         let mut task = TaskBuilder::new(105)
             .with_frequency_once_by_seconds(60) // Next execution in 60 seconds
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         // Set up cascade guide to place task in minute wheel slot 5
@@ -1163,7 +1163,7 @@ mod tests {
         // Create a task that should go to hour wheel (in 3600+ seconds)
         let mut task = TaskBuilder::new(102)
             .with_frequency_once_by_seconds(3665) // 3665 seconds from now (1h 1m 5s)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         // Manually set the wheel position to make the task go to hour wheel
@@ -1208,7 +1208,7 @@ mod tests {
         let wheel = MulitWheel::new();
         let task = TaskBuilder::new(103)
             .with_frequency_once_by_seconds(5)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         // Add task to wheel
@@ -1322,7 +1322,7 @@ mod tests {
 
         let task = TaskBuilder::new(1)
             .with_frequency_repeated_by_seconds(60)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         wheel.add_task(task).unwrap();
@@ -1342,7 +1342,7 @@ mod tests {
 
         let task = TaskBuilder::new(2)
             .with_frequency_repeated_by_seconds(60)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         wheel.add_task(task).unwrap();
@@ -1368,7 +1368,7 @@ mod tests {
 
         let task = TaskBuilder::new(3)
             .with_frequency_repeated_by_seconds(60)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         wheel.add_task(task).unwrap();
@@ -1525,7 +1525,7 @@ mod tests {
         // Create a task that runs in 5 minutes (300 seconds)
         let task = TaskBuilder::new(200)
             .with_frequency_once_by_seconds(300)
-            .spwan_async(TestTaskRunner::new())
+            .spawn_async(TestTaskRunner::new())
             .unwrap();
 
         wheel.add_task(task).unwrap();

@@ -27,7 +27,7 @@ async fn main() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask {
+        .spawn_async(CounterTask {
             id: 1,
             counter: counter.clone(),
         })
@@ -64,7 +64,7 @@ async fn main() {
     println!("\n--- Test 3: Advance beyond wait time ---");
     let task2 = TaskBuilder::new(2)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask {
+        .spawn_async(CounterTask {
             id: 2,
             counter: counter.clone(),
         })

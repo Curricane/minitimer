@@ -25,7 +25,7 @@ async fn main() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_count_down_by_seconds(3, 1)
-        .spwan_async(CountDownTask {
+        .spawn_async(CountDownTask {
             counter: counter.clone(),
         })
         .unwrap();

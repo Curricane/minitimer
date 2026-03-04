@@ -21,12 +21,12 @@ async fn test_add_duplicate_task() {
 
     let task1 = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     let task2 = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(120)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task1).unwrap();

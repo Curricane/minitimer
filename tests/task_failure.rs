@@ -22,7 +22,7 @@ async fn test_failing_task_does_not_crash_timer() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(1)
-        .spwan_async(FailingTask::new(counter.clone()))
+        .spawn_async(FailingTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();

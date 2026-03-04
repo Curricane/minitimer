@@ -23,7 +23,7 @@ async fn test_advance_task_by_duration() {
 
     let task = TaskBuilder::new(10)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -69,7 +69,7 @@ async fn test_advance_task_trigger_immediately() {
 
     let task = TaskBuilder::new(11)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -114,7 +114,7 @@ async fn test_advance_task_exceed_wait_time() {
 
     let task = TaskBuilder::new(12)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -165,7 +165,7 @@ async fn test_advance_task_reset_frequency_behavior() {
 
     let task = TaskBuilder::new(13)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -219,7 +219,7 @@ async fn test_advance_task_zero_duration() {
 
     let task = TaskBuilder::new(14)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -277,7 +277,7 @@ async fn test_advance_task_once_triggers_immediately() {
 
     let task = TaskBuilder::new(15)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -328,7 +328,7 @@ async fn test_advance_task_once_removed_after_execution() {
 
     let task = TaskBuilder::new(16)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -381,7 +381,7 @@ async fn test_advance_task_reset_frequency_true() {
     // Create a repeated task with 60-second interval
     let task = TaskBuilder::new(17)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -454,7 +454,7 @@ async fn test_advance_task_reset_frequency_multi_round() {
     // Create a repeated task with 60-second interval
     let task = TaskBuilder::new(18)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();

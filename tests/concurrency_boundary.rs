@@ -23,7 +23,7 @@ async fn test_max_concurrency_respected() {
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(1)
         .with_max_concurrency(1)
-        .spwan_async(SlowTask::new(counter.clone(), 500))
+        .spawn_async(SlowTask::new(counter.clone(), 500))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -52,7 +52,7 @@ async fn test_one_second_interval() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(1)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -76,7 +76,7 @@ async fn test_countdown_one_execution() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_count_down_by_seconds(1, 1)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -101,7 +101,7 @@ async fn test_very_long_interval_task() {
     // 100000 seconds = ~27.8 hours
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(100000)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
