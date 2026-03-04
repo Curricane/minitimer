@@ -862,6 +862,58 @@ impl MulitWheel {
 
         Ok(())
     }
+
+    /// Updates an existing task with a new Task.
+    ///
+    /// This replaces the existing task with a new one, preserving the task_id
+    /// but using the new task's frequency, concurrency, and runner settings.
+    ///
+    /// # Arguments
+    /// * `task_id` - The unique identifier of the task to update
+    /// * `new_task` - The new task to replace the existing one
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the task was successfully updated
+    /// * `Err(TaskError)` - If the task doesn't exist
+    pub fn update_task(&self, task_id: TaskId, mut new_task: Task) -> Result<(), TaskError> {
+        if !self.task_tracker_map.contains_key(&task_id) {
+            return Err(TaskError::TaskNotFound(task_id));
+        }
+
+        new_task.task_id = task_id;
+
+        let next_alarm_sec = match new_task.frequency.peek_alarm_timestamp() {
+            Some(t) => t.saturating_sub(timestamp()),
+            None => {
+                let _ = self.remove_task(task_id);
+                return Ok(());
+            }
+        };
+
+        let next_guide = self.cal_next_hand_position(next_alarm_sec);
+        new_task.set_wheel_position(next_guide);
+
+        if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task_id) {
+            tracking_info.cascade_guide = next_guide;
+            tracking_info.max_concurrency = new_task.max_concurrency;
+
+            if let Some(hour) = next_guide.hour {
+                tracking_info.wheel_type = WheelType::Hour;
+                tracking_info.slot_num = hour;
+                self.hour_wheel.add_task(new_task.clone(), hour);
+            } else if let Some(min) = next_guide.min {
+                tracking_info.wheel_type = WheelType::Minute;
+                tracking_info.slot_num = min;
+                self.min_wheel.add_task(new_task.clone(), min);
+            } else {
+                tracking_info.wheel_type = WheelType::Second;
+                tracking_info.slot_num = next_guide.sec;
+                self.sec_wheel.add_task(new_task.clone(), next_guide.sec);
+            }
+        }
+
+        Ok(())
+    }
 }
 
 // Implement remove_task method for Wheel
@@ -1549,5 +1601,249 @@ mod tests {
             "Expected time_to_next_run to be 50700 seconds, got {}",
             status.time_to_next_run
         );
+    }
+
+    #[test]
+    fn test_update_task_with_task() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let original_status = wheel.task_status(1).unwrap();
+        assert_eq!(original_status.max_concurrency, 1);
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(30)
+            .with_max_concurrency(5)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert_eq!(
+            updated_status.frequency_config,
+            FrequencySeconds::Repeated(30)
+        );
+        assert_eq!(updated_status.max_concurrency, 5);
+    }
+
+    #[test]
+    fn test_update_task_not_found() {
+        let wheel = MulitWheel::new();
+
+        let new_task = TaskBuilder::new(999)
+            .with_frequency_repeated_by_seconds(30)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        let result = wheel.update_task(999, new_task);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_update_task_different_frequency() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_once_by_seconds(120)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert_eq!(updated_status.frequency_config, FrequencySeconds::Once(120));
+    }
+
+    #[test]
+    fn test_update_task_preserves_task_in_wheel() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        assert!(wheel.task_tracking_info(1).is_some());
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(30)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        assert!(
+            wheel.task_tracking_info(1).is_some(),
+            "Task should still exist after update"
+        );
+    }
+
+    #[test]
+    fn test_update_task_with_countdown_frequency() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_count_down_by_seconds(3, 10)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert_eq!(
+            updated_status.frequency_config,
+            FrequencySeconds::CountDown(3, 10)
+        );
+    }
+
+    #[test]
+    fn test_update_task_long_interval() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(7200)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert_eq!(
+            updated_status.frequency_config,
+            FrequencySeconds::Repeated(7200)
+        );
+        assert_eq!(updated_status.wheel_type, WheelType::Hour);
+    }
+
+    #[test]
+    fn test_update_task_preserves_running_records() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let record_id = wheel.try_start_task(1, 10).unwrap();
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(30)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert!(updated_status.running_records.contains(&record_id));
+    }
+
+    #[test]
+    fn test_update_task_different_task_id_in_new_task() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let new_task = TaskBuilder::new(2)
+            .with_frequency_repeated_by_seconds(30)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert_eq!(
+            updated_status.frequency_config,
+            FrequencySeconds::Repeated(30)
+        );
+    }
+
+    #[test]
+    fn test_update_task_second_wheel_placement() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(10)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert_eq!(updated_status.wheel_type, WheelType::Second);
+    }
+
+    #[test]
+    fn test_update_task_minute_wheel_placement() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(30, 0, 0);
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(60)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.add_task(task).unwrap();
+
+        let new_task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(120)
+            .spawn_async(TestTaskRunner::new())
+            .unwrap();
+
+        wheel.update_task(1, new_task).unwrap();
+
+        let updated_status = wheel.task_status(1).unwrap();
+        assert_eq!(updated_status.wheel_type, WheelType::Minute);
     }
 }

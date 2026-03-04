@@ -157,6 +157,22 @@ impl MiniTimer {
             .accelerate_task(task_id, duration_secs, reset_frequency)
     }
 
+    /// Updates an existing task with a new Task.
+    ///
+    /// This replaces the existing task with a new one, preserving the task_id
+    /// but using the new task's frequency, concurrency, and runner settings.
+    ///
+    /// # Arguments
+    /// * `task_id` - The ID of the task to update
+    /// * `new_task` - The new task to replace the existing one
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the task was successfully updated
+    /// * `Err(TaskError)` - If the task doesn't exist
+    pub fn update_task(&self, task_id: TaskId, new_task: Task) -> Result<(), TaskError> {
+        self.wheel.update_task(task_id, new_task)
+    }
+
     /// Stops the timer system.
     ///
     /// This stops the internal timer and sets the running flag to false.
