@@ -94,6 +94,10 @@ impl FrequencyState {
 
     /// Gets the next alarm timestamp and advances the state.
     ///
+    /// WARNING: This method advances the frequency state, meaning subsequent calls
+    /// will return the next timestamp in the sequence. If you need to peek at the
+    /// next timestamp without advancing, use `peek_alarm_timestamp()` instead.
+    ///
     /// # Returns
     /// The next timestamp when the task should execute, or None if no more executions.
     pub(crate) fn next_alarm_timestamp(&mut self) -> Option<u64> {
