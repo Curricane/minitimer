@@ -54,7 +54,7 @@ async fn main() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(3)
-        .spwan_async(MyTask {
+        .spawn_async(MyTask {
             message: "Hello from MiniTimer!".to_string(),
         })
         .unwrap();
@@ -72,7 +72,7 @@ async fn main() {
 ```rust
 let task = TaskBuilder::new(1)
     .with_frequency_once_by_seconds(60)
-    .spwan_async(MyTask { ... })
+    .spawn_async(MyTask { ... })
     .unwrap();
 ```
 
@@ -81,7 +81,7 @@ let task = TaskBuilder::new(1)
 ```rust
 let task = TaskBuilder::new(1)
     .with_frequency_repeated_by_seconds(10)
-    .spwan_async(MyTask { ... })
+    .spawn_async(MyTask { ... })
     .unwrap();
 ```
 
@@ -90,7 +90,7 @@ let task = TaskBuilder::new(1)
 ```rust
 let task = TaskBuilder::new(1)
     .with_frequency_count_down_by_seconds(3, 1)
-    .spwan_async(MyTask { ... })
+    .spawn_async(MyTask { ... })
     .unwrap();
 ```
 
@@ -100,7 +100,7 @@ let task = TaskBuilder::new(1)
 let target_timestamp = 1700000000;
 let task = TaskBuilder::new(1)
     .with_frequency_once_by_timestamp_seconds(target_timestamp)
-    .spwan_async(MyTask { ... })
+    .spawn_async(MyTask { ... })
     .unwrap();
 ```
 
@@ -110,7 +110,7 @@ let task = TaskBuilder::new(1)
 let task = TaskBuilder::new(1)
     .with_frequency_repeated_by_seconds(1)
     .with_max_concurrency(3)
-    .spwan_async(MyTask { ... })
+    .spawn_async(MyTask { ... })
     .unwrap();
 ```
 

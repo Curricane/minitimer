@@ -24,7 +24,7 @@ async fn test_timer_start_stop() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
     timer.add_task(task).unwrap();
 
@@ -50,7 +50,7 @@ async fn test_timer_stop_functionality() {
     // Add a task before stopping
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(1)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -86,7 +86,7 @@ async fn test_timer_clone() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -109,7 +109,7 @@ async fn test_timer_clone_shares_state() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(1)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer1.add_task(task).unwrap();

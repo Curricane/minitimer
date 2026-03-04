@@ -21,17 +21,17 @@ async fn main() {
 
     let task1 = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(2)
-        .spwan_async(SimpleTask { id: 1 })
+        .spawn_async(SimpleTask { id: 1 })
         .unwrap();
 
     let task2 = TaskBuilder::new(2)
         .with_frequency_once_by_seconds(5)
-        .spwan_async(SimpleTask { id: 2 })
+        .spawn_async(SimpleTask { id: 2 })
         .unwrap();
 
     let task3 = TaskBuilder::new(3)
         .with_frequency_count_down_by_seconds(3, 1)
-        .spwan_async(SimpleTask { id: 3 })
+        .spawn_async(SimpleTask { id: 3 })
         .unwrap();
 
     timer.add_task(task1).unwrap();

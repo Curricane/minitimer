@@ -23,7 +23,7 @@ async fn test_large_number_of_tasks() {
         let counter = Arc::new(AtomicU64::new(0));
         let task = TaskBuilder::new(i as u64)
             .with_frequency_once_by_seconds(60)
-            .spwan_async(CounterTask::new(counter))
+            .spawn_async(CounterTask::new(counter))
             .unwrap();
         timer.add_task(task).unwrap();
     }
@@ -55,7 +55,7 @@ async fn test_rapid_add_remove_operations() {
     for i in 0..100 {
         let task = TaskBuilder::new(i)
             .with_frequency_once_by_seconds(60)
-            .spwan_async(CounterTask::new(counter.clone()))
+            .spawn_async(CounterTask::new(counter.clone()))
             .unwrap();
         timer.add_task(task).unwrap();
 

@@ -21,7 +21,7 @@ async fn main() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(3)
-        .spwan_async(DelayedPrintTask {
+        .spawn_async(DelayedPrintTask {
             message: "Hello from minitimer!".to_string(),
         })
         .unwrap();

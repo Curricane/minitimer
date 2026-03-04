@@ -22,7 +22,7 @@ async fn test_task_add_and_remove() {
 
     let task = TaskBuilder::new(100)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -47,7 +47,7 @@ async fn test_task_state_query() {
 
     let task = TaskBuilder::new(200)
         .with_frequency_once_by_seconds(10)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -77,13 +77,13 @@ async fn test_task_count() {
 
     let task1 = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
     timer.add_task(task1).unwrap();
 
     let task2 = TaskBuilder::new(2)
         .with_frequency_once_by_seconds(120)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
     timer.add_task(task2).unwrap();
 
@@ -99,13 +99,13 @@ async fn test_get_pending_tasks() {
 
     let task1 = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
     timer.add_task(task1).unwrap();
 
     let task2 = TaskBuilder::new(2)
         .with_frequency_once_by_seconds(120)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
     timer.add_task(task2).unwrap();
 
@@ -126,7 +126,7 @@ async fn test_remove_running_task() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(1)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -151,7 +151,7 @@ async fn test_get_running_tasks() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(1)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();

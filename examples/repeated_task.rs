@@ -25,7 +25,7 @@ async fn main() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(1)
-        .spwan_async(PeriodicTask {
+        .spawn_async(PeriodicTask {
             counter: counter.clone(),
         })
         .unwrap();

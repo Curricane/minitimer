@@ -23,7 +23,7 @@ async fn test_hour_level_task() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(3665)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -48,7 +48,7 @@ async fn test_day_level_task() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(90000)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -72,7 +72,7 @@ async fn test_minute_level_repeated_task() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(60)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -98,7 +98,7 @@ async fn test_hour_level_repeated_task() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(3600)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -126,7 +126,7 @@ async fn test_minute_to_second_cascade() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(65)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -155,7 +155,7 @@ async fn test_hour_level_task_not_execute_early() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(3665)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -186,7 +186,7 @@ async fn test_hour_to_minute_to_second_cascade_complete() {
     // Use 65s instead of 3665s to make test faster while still testing cascade
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(65)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -219,17 +219,17 @@ async fn test_multi_wheel_tasks() {
 
     let task_second = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(2)
-        .spwan_async(CounterTask::new(counter_second.clone()))
+        .spawn_async(CounterTask::new(counter_second.clone()))
         .unwrap();
 
     let task_minute = TaskBuilder::new(2)
         .with_frequency_once_by_seconds(65)
-        .spwan_async(CounterTask::new(counter_minute.clone()))
+        .spawn_async(CounterTask::new(counter_minute.clone()))
         .unwrap();
 
     let task_hour = TaskBuilder::new(3)
         .with_frequency_once_by_seconds(3665)
-        .spwan_async(CounterTask::new(counter_hour.clone()))
+        .spawn_async(CounterTask::new(counter_hour.clone()))
         .unwrap();
 
     timer.add_task(task_second).unwrap();
@@ -265,7 +265,7 @@ async fn test_task_placed_in_minute_wheel() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(120)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -294,7 +294,7 @@ async fn test_task_placed_in_hour_wheel() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(7200)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -318,7 +318,7 @@ async fn test_repeated_task_spanning_wheels() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(90)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
@@ -344,7 +344,7 @@ async fn test_tick_method_works() {
 
     let task = TaskBuilder::new(1)
         .with_frequency_once_by_seconds(2)
-        .spwan_async(CounterTask::new(counter.clone()))
+        .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();

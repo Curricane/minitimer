@@ -45,7 +45,7 @@ async fn main() {
         let task = TaskBuilder::new(i)
             .with_frequency_once_by_seconds(1)
             .with_max_concurrency(max_concurrency)
-            .spwan_async(ConcurrentTask {
+            .spawn_async(ConcurrentTask {
                 task_id: i,
                 active_count: active_count.clone(),
             })

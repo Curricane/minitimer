@@ -158,7 +158,7 @@ impl TaskBuilder {
     /// # Returns
     /// * `Ok(Task)` - If the task was successfully built
     /// * `Err(TaskError)` - If there was an error building the task
-    pub fn spwan_async<T: TaskRunner<Output = ()> + Send + Sync>(
+    pub fn spawn_async<T: TaskRunner<Output = ()> + Send + Sync>(
         self,
         task_runner: T,
     ) -> Result<Task, TaskError> {
