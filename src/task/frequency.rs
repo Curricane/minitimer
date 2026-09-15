@@ -87,6 +87,11 @@ impl FrequencyState {
         self.next_alarm
     }
 
+    /// The number of seconds between executions.
+    pub(crate) fn interval(&self) -> u64 {
+        self.interval
+    }
+
     /// Consumes the next alarm timestamp.
     ///
     /// Subsequent calls return the following timestamp in the sequence.
