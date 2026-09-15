@@ -150,10 +150,12 @@ impl MulitWheel {
                     if let Err(err) = runner.run().await {
                         warn!("task {task_id} failed: {err}");
                     }
-                    wheel.complete_task(task_id, record_id);
+                    // Drop a finished task before reporting the execution as
+                    // complete, so waiting for idle means the task is gone.
                     if is_last_execution {
                         let _ = wheel.remove_task(task_id);
                     }
+                    wheel.complete_task(task_id, record_id);
                 });
             }
             None => {

@@ -129,4 +129,9 @@ async fn test_wait_for_idle_waits_for_running_tasks() {
         "Waiting for idle should mean the execution has finished"
     );
     assert!(timer.get_running_tasks().is_empty());
+    assert!(
+        !timer.contains_task(1),
+        "A task that has run its last execution should be gone"
+    );
+    assert_eq!(timer.task_count(), 0);
 }
