@@ -13,6 +13,10 @@ use crate::{
     utils::timestamp,
 };
 
+const SECONDS_PER_MINUTE: u64 = 60;
+const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
+const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+
 /// Multi-level time wheel implementation for task scheduling.
 ///
 /// This structure implements a three-level timing wheel system:
@@ -434,6 +438,11 @@ impl MulitWheel {
 
     /// Calculates the number of seconds until the next execution.
     ///
+    /// A task is positioned by as many coordinates as the wheel it sits on
+    /// needs: hour, minute and second on the hour wheel, minute and second on
+    /// the minute wheel, second only on the second wheel. The coarser
+    /// coordinates must not take part in the calculation.
+    ///
     /// # Arguments
     /// * `guide` - The wheel cascade guide containing task position info
     ///
@@ -442,24 +451,37 @@ impl MulitWheel {
     fn calculate_next_run_seconds(&self, guide: &WheelCascadeGuide) -> u64 {
         let (current_sec, current_min, current_hour) = self.get_wheel_positions();
 
-        // Calculate target time in seconds from the cascade guide
-        let target_sec = guide.sec;
-        let target_min = guide.min.unwrap_or(0);
-        let target_hour = guide.hour.unwrap_or(0);
+        match (guide.hour, guide.min) {
+            (Some(hour), Some(min)) => {
+                let target = hour * SECONDS_PER_HOUR + min * SECONDS_PER_MINUTE + guide.sec;
+                let current = current_hour * SECONDS_PER_HOUR
+                    + current_min * SECONDS_PER_MINUTE
+                    + current_sec;
+                let until_slot = (target + SECONDS_PER_DAY - current) % SECONDS_PER_DAY;
 
-        // Convert current and target times to total seconds
-        let current_total = current_hour * 3600 + current_min * 60 + current_sec;
-        let target_total = target_hour * 3600 + target_min * 60 + target_sec;
+                // Landing on the current slot means the hand has just passed
+                // it, so the next visit takes a full day.
+                let until_slot = if until_slot == 0 {
+                    SECONDS_PER_DAY
+                } else {
+                    until_slot
+                };
 
-        // Calculate the difference considering the round
-        let wheel_capacity = 24 * 3600; // 24 hours in seconds
-        let round_seconds = guide.round * wheel_capacity;
+                until_slot + guide.round * SECONDS_PER_DAY
+            }
+            (None, Some(min)) => {
+                let target = min * SECONDS_PER_MINUTE + guide.sec;
+                let current = current_min * SECONDS_PER_MINUTE + current_sec;
+                let until_slot = (target + SECONDS_PER_HOUR - current) % SECONDS_PER_HOUR;
 
-        if target_total >= current_total {
-            (target_total - current_total) + round_seconds
-        } else {
-            // Target is on the next day/cycle
-            (wheel_capacity - current_total + target_total) + round_seconds
+                if until_slot == 0 {
+                    SECONDS_PER_HOUR
+                } else {
+                    until_slot
+                }
+            }
+            // A task without a minute position is placed by second only.
+            _ => (guide.sec + SECONDS_PER_MINUTE - current_sec) % SECONDS_PER_MINUTE,
         }
     }
 
@@ -1092,6 +1114,76 @@ mod tests {
     }
 
     #[test]
+    fn test_calculate_next_run_seconds_per_wheel() {
+        let wheel = MulitWheel::new();
+        // 10:20:30
+        wheel.set_wheel_positions(30, 20, 10);
+
+        // Second wheel task: only the second counts
+        let guide = WheelCascadeGuide {
+            sec: 35,
+            min: None,
+            hour: None,
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), 5);
+
+        // Minute wheel task: a task 60 seconds away sits on the next minute
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(21),
+            hour: None,
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), 60);
+
+        // Hour wheel task: 10 seconds past the next hour
+        let guide = WheelCascadeGuide {
+            sec: 5,
+            min: Some(0),
+            hour: Some(11),
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), 39 * 60 + 35);
+
+        // The same task one day out
+        let guide = WheelCascadeGuide {
+            sec: 5,
+            min: Some(0),
+            hour: Some(11),
+            round: 1,
+        };
+        assert_eq!(
+            wheel.calculate_next_run_seconds(&guide),
+            SECONDS_PER_DAY + 39 * 60 + 35
+        );
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_on_the_current_slot() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(0, 0, 0);
+
+        // A task due in exactly 24 hours lands on the slot the hand is on
+        let guide = WheelCascadeGuide {
+            sec: 0,
+            min: Some(0),
+            hour: Some(0),
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), SECONDS_PER_DAY);
+
+        // A task due in exactly one hour lands on the current minute
+        let guide = WheelCascadeGuide {
+            sec: 0,
+            min: Some(0),
+            hour: None,
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), SECONDS_PER_HOUR);
+    }
+
+    #[test]
     fn test_tick_without_cascade() {
         let multi_wheel = MulitWheel::new();
 
@@ -1469,12 +1561,13 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_next_run_seconds_same_time() {
+    fn test_calculate_next_run_seconds_on_its_own_slot() {
         let wheel = MulitWheel::new();
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target time is exactly the same as current time
+        // A task sitting on the slot the hour hand is on has just missed it,
+        // so it waits for the next visit of that slot.
         let guide = WheelCascadeGuide {
             sec: 45,
             min: Some(30),
@@ -1482,9 +1575,8 @@ mod tests {
             round: 0,
         };
 
-        // Should return 0 seconds (task should execute immediately)
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 0);
+        assert_eq!(result, SECONDS_PER_DAY);
     }
 
     #[test]
@@ -1531,7 +1623,8 @@ mod tests {
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target time is same as current but with 1 round (next day)
+        // Same slot, so the task waits out the visit that follows the one it
+        // just missed (24 hours) plus the extra lap it carries (1 round)
         let guide = WheelCascadeGuide {
             sec: 45,
             min: Some(30),
@@ -1539,9 +1632,8 @@ mod tests {
             round: 1,
         };
 
-        // Expected: 0 + 1 * 24 * 3600 = 86400 seconds (1 day)
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 86400);
+        assert_eq!(result, 2 * SECONDS_PER_DAY);
     }
 
     #[test]
@@ -1570,7 +1662,7 @@ mod tests {
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target with only seconds specified (min and hour are None, treated as 0)
+        // A task on the second wheel is placed by its second slot only
         let guide = WheelCascadeGuide {
             sec: 50,
             min: None,
@@ -1578,11 +1670,9 @@ mod tests {
             round: 0,
         };
 
-        // Current: 10*3600 + 30*60 + 45 = 37845
-        // Target: 0*3600 + 0*60 + 50 = 50
-        // Since target < current, wrap around: 86400 - 37845 + 50 = 48605 seconds
+        // The second hand reaches slot 50 five seconds from now
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 48605);
+        assert_eq!(result, 5);
     }
 
     #[test]
@@ -1591,7 +1681,7 @@ mod tests {
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target with seconds and minutes, but no hour
+        // A task on the minute wheel ignores the hour
         let guide = WheelCascadeGuide {
             sec: 30,
             min: Some(35),
@@ -1599,11 +1689,9 @@ mod tests {
             round: 0,
         };
 
-        // Current: 10*3600 + 30*60 + 45 = 37845
-        // Target: 0*3600 + 35*60 + 30 = 2130
-        // Since target < current, wrap around: 86400 - 37845 + 2130 = 50685 seconds
+        // 10:30:45 -> 10:35:30 is 4 minutes 45 seconds
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 50685);
+        assert_eq!(result, 4 * 60 + 45);
     }
 
     #[test]
@@ -1630,13 +1718,10 @@ mod tests {
         assert_eq!(status.cascade_guide.hour, None); // No hour since it's within the same hour
         assert_eq!(status.cascade_guide.round, 0);
 
-        // time_to_next_run should be exactly 300 seconds (5 minutes)
-        // Current: 10*3600 + 30*60 + 0 = 37800
-        // Target: 0*3600 + 35*60 + 0 = 2100
-        // Since target < current, wrap around: 86400 - 37800 + 2100 = 50700 seconds
+        // time_to_next_run should be the 300 seconds the task was configured with
         assert_eq!(
-            status.time_to_next_run, 50700,
-            "Expected time_to_next_run to be 50700 seconds, got {}",
+            status.time_to_next_run, 300,
+            "Expected time_to_next_run to be 300 seconds, got {}",
             status.time_to_next_run
         );
     }
