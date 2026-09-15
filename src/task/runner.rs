@@ -2,6 +2,10 @@
 ///
 /// Users implement this trait to define what their scheduled task does.
 /// The task runner is executed when the scheduled time arrives.
+///
+/// The scheduler runs tasks through `TaskBuilder::spawn_async`, which accepts
+/// runners producing `()`. A failure is logged with the `log` crate and does
+/// not affect the timer or the task's remaining executions.
 #[async_trait::async_trait]
 pub trait TaskRunner: Send + Sync + 'static {
     /// The output type produced by the task runner.

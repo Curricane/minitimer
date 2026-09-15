@@ -11,7 +11,40 @@ use minitimer::MiniTimer;
 use minitimer::task::TaskBuilder;
 
 mod common;
-use common::CounterTask;
+use common::{CounterTask, SlowTask};
+
+/// Test that a task with an execution in flight is running, not pending.
+#[tokio::test]
+async fn test_pending_excludes_running_tasks() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let running = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(1)
+        .spawn_async(SlowTask::new(counter.clone(), 2000))
+        .unwrap();
+    let waiting = TaskBuilder::new(2)
+        .with_frequency_once_by_seconds(60)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(running).unwrap();
+    timer.add_task(waiting).unwrap();
+
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    assert_eq!(
+        timer.get_running_tasks(),
+        vec![1],
+        "Task 1 should be running"
+    );
+    assert_eq!(
+        timer.get_pending_tasks(),
+        vec![2],
+        "Only the waiting task should be pending"
+    );
+}
 
 /// Test that tasks can be added and removed from the timer.
 #[tokio::test]

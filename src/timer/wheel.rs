@@ -13,6 +13,10 @@ use crate::{
     utils::timestamp,
 };
 
+const SECONDS_PER_MINUTE: u64 = 60;
+const SECONDS_PER_HOUR: u64 = 60 * SECONDS_PER_MINUTE;
+const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
+
 /// Multi-level time wheel implementation for task scheduling.
 ///
 /// This structure implements a three-level timing wheel system:
@@ -128,7 +132,9 @@ impl MulitWheel {
 
                 let wheel = self.clone();
                 tokio::spawn(async move {
-                    let _ = runner.run().await;
+                    if let Err(err) = runner.run().await {
+                        warn!("task {task_id} failed: {err}");
+                    }
                     wheel.complete_task(task_id, record_id);
                     if is_last_execution {
                         let _ = wheel.remove_task(task_id);
@@ -203,7 +209,11 @@ impl MulitWheel {
 
         let total_hours = current_hour + hour_carry;
         let final_hour = total_hours % 24;
-        let round = total_hours / 24;
+
+        // The hand reaches the task's slot for the first time within the delay
+        // itself; `round` counts the further rotations the task has to survive
+        // before it is released, one rotation per hour-wheel lap.
+        let round = (hour_carry - 1) / 24;
 
         WheelCascadeGuide {
             sec: final_sec,
@@ -430,6 +440,11 @@ impl MulitWheel {
 
     /// Calculates the number of seconds until the next execution.
     ///
+    /// A task is positioned by as many coordinates as the wheel it sits on
+    /// needs: hour, minute and second on the hour wheel, minute and second on
+    /// the minute wheel, second only on the second wheel. The coarser
+    /// coordinates must not take part in the calculation.
+    ///
     /// # Arguments
     /// * `guide` - The wheel cascade guide containing task position info
     ///
@@ -438,24 +453,37 @@ impl MulitWheel {
     fn calculate_next_run_seconds(&self, guide: &WheelCascadeGuide) -> u64 {
         let (current_sec, current_min, current_hour) = self.get_wheel_positions();
 
-        // Calculate target time in seconds from the cascade guide
-        let target_sec = guide.sec;
-        let target_min = guide.min.unwrap_or(0);
-        let target_hour = guide.hour.unwrap_or(0);
+        match (guide.hour, guide.min) {
+            (Some(hour), Some(min)) => {
+                let target = hour * SECONDS_PER_HOUR + min * SECONDS_PER_MINUTE + guide.sec;
+                let current = current_hour * SECONDS_PER_HOUR
+                    + current_min * SECONDS_PER_MINUTE
+                    + current_sec;
+                let until_slot = (target + SECONDS_PER_DAY - current) % SECONDS_PER_DAY;
 
-        // Convert current and target times to total seconds
-        let current_total = current_hour * 3600 + current_min * 60 + current_sec;
-        let target_total = target_hour * 3600 + target_min * 60 + target_sec;
+                // Landing on the current slot means the hand has just passed
+                // it, so the next visit takes a full day.
+                let until_slot = if until_slot == 0 {
+                    SECONDS_PER_DAY
+                } else {
+                    until_slot
+                };
 
-        // Calculate the difference considering the round
-        let wheel_capacity = 24 * 3600; // 24 hours in seconds
-        let round_seconds = guide.round * wheel_capacity;
+                until_slot + guide.round * SECONDS_PER_DAY
+            }
+            (None, Some(min)) => {
+                let target = min * SECONDS_PER_MINUTE + guide.sec;
+                let current = current_min * SECONDS_PER_MINUTE + current_sec;
+                let until_slot = (target + SECONDS_PER_HOUR - current) % SECONDS_PER_HOUR;
 
-        if target_total >= current_total {
-            (target_total - current_total) + round_seconds
-        } else {
-            // Target is on the next day/cycle
-            (wheel_capacity - current_total + target_total) + round_seconds
+                if until_slot == 0 {
+                    SECONDS_PER_HOUR
+                } else {
+                    until_slot
+                }
+            }
+            // A task without a minute position is placed by second only.
+            _ => (guide.sec + SECONDS_PER_MINUTE - current_sec) % SECONDS_PER_MINUTE,
         }
     }
 
@@ -486,12 +514,16 @@ impl MulitWheel {
         Some((task?, tracking_info))
     }
 
-    /// Get all pending tasks (tasks currently scheduled in the wheel).
+    /// Get all pending tasks (tasks scheduled and not currently running).
     ///
     /// # Returns
-    /// A vector of task IDs that are currently pending execution.
+    /// A vector of task IDs that are waiting for their next execution.
     pub fn get_all_pending_tasks(&self) -> Vec<TaskId> {
-        self.task_tracker_map.iter().map(|r| *r.key()).collect()
+        self.task_tracker_map
+            .iter()
+            .filter(|t| t.running_records.is_empty())
+            .map(|r| *r.key())
+            .collect()
     }
 
     /// Get all running task IDs (tasks that have at least one running record).
@@ -645,8 +677,13 @@ impl MulitWheel {
         let hand = self.min_wheel.hand.load(Ordering::Relaxed);
         let slot = self.min_wheel.slots.remove(&hand);
         if let Some((_, slot)) = slot {
-            for task in slot.task_map.into_values() {
+            for mut task in slot.task_map.into_values() {
                 let slot_num = task.cascade_guide.sec;
+
+                // The task is now scheduled by the second it holds, so the
+                // coarser positions must not take part in arrival checks.
+                task.cascade_guide.min = None;
+                task.cascade_guide.hour = None;
 
                 // Update information from tracking map
                 if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
@@ -674,25 +711,50 @@ impl MulitWheel {
         let mut new_slot = Slot::new();
         if let Some((_, slot)) = slot {
             for mut task in slot.task_map.into_values() {
-                let round = task.cascade_guide.round;
-                if round > 0 {
+                if task.cascade_guide.round > 0 {
+                    task.cascade_guide.round = task.cascade_guide.round.saturating_sub(1);
                     // Update round in tracking information
                     if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
-                        task.cascade_guide.round = task.cascade_guide.round.saturating_sub(1);
                         tracking_info.cascade_guide = task.cascade_guide;
                     }
                     new_slot.add_task(task);
                     continue;
-                } else {
-                    // Move from hour wheel to minute wheel
-                    if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
-                        tracking_info.wheel_type = WheelType::Minute;
-                        tracking_info.slot_num = task.cascade_guide.min.unwrap();
-                        tracking_info.cascade_guide = task.cascade_guide;
-                    }
+                }
 
-                    let slot_num = task.cascade_guide.min.unwrap();
-                    self.min_wheel.add_task(task, slot_num);
+                // The hour position has served its purpose; the task is placed
+                // by minute and second from here on.
+                task.cascade_guide.hour = None;
+
+                match task.cascade_guide.min {
+                    // A zero minute offset means the task is due within the
+                    // minute that has just been filled, so it goes to the
+                    // second wheel instead of waiting a full minute rotation.
+                    Some(0) => {
+                        task.cascade_guide.min = None;
+                        let slot_num = task.cascade_guide.sec;
+                        if let Some(mut tracking_info) =
+                            self.task_tracker_map.get_mut(&task.task_id)
+                        {
+                            tracking_info.wheel_type = WheelType::Second;
+                            tracking_info.slot_num = slot_num;
+                            tracking_info.cascade_guide = task.cascade_guide;
+                        }
+                        self.sec_wheel.add_task(task, slot_num);
+                    }
+                    Some(slot_num) => {
+                        if let Some(mut tracking_info) =
+                            self.task_tracker_map.get_mut(&task.task_id)
+                        {
+                            tracking_info.wheel_type = WheelType::Minute;
+                            tracking_info.slot_num = slot_num;
+                            tracking_info.cascade_guide = task.cascade_guide;
+                        }
+                        self.min_wheel.add_task(task, slot_num);
+                    }
+                    None => {
+                        let slot_num = task.cascade_guide.sec;
+                        self.sec_wheel.add_task(task, slot_num);
+                    }
                 }
             }
         }
@@ -989,12 +1051,39 @@ mod tests {
         // 23:59:55
         wheel.set_wheel_positions(55, 59, 23);
 
-        // (55 + 10 = 65 => 5 seconds, 60 minutes => 0 minutes, 24 hours => 0 hours, 1 round)
+        // (55 + 10 = 65 => 5 seconds, 60 minutes => 0 minutes, 24 hours => 0 hours)
+        // The hour hand reaches the target slot on its next move, five seconds
+        // away, so no extra rotation is needed.
         let pos = wheel.cal_next_hand_position(10);
         assert_eq!(pos.sec, 5);
         assert_eq!(pos.min, Some(0));
         assert_eq!(pos.hour, Some(0));
+        assert_eq!(pos.round, 0);
+    }
+
+    #[test]
+    fn test_cal_next_hand_position_day_rounds() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(0, 0, 0);
+
+        // 24 hours: the target slot is reached exactly when the wheel comes
+        // back around, with no further rotation to survive.
+        let pos = wheel.cal_next_hand_position(24 * 3600);
+        assert_eq!(pos.hour, Some(0));
+        assert_eq!(pos.round, 0);
+
+        // 25 hours: one extra lap after reaching the target slot
+        let pos = wheel.cal_next_hand_position(25 * 3600);
+        assert_eq!(pos.hour, Some(1));
         assert_eq!(pos.round, 1);
+
+        // 48 hours: one extra lap, with the second one releasing the task
+        let pos = wheel.cal_next_hand_position(48 * 3600);
+        assert_eq!(pos.round, 1);
+
+        // 49 hours
+        let pos = wheel.cal_next_hand_position(49 * 3600);
+        assert_eq!(pos.round, 2);
     }
 
     #[test]
@@ -1023,11 +1112,81 @@ mod tests {
         // 100040 % 60 = 20 seconds
         // (30 + 100040/60) % 60 = (30 + 1667) % 60 = 1697 % 60 = 17 minutes
         // (20 + 1697/60) % 24 = (20 + 28) % 24 = 48 % 24 = 0 hours
-        // 48 / 24 = 2 rounds
+        // 28 hour-wheel moves => one extra lap
         assert_eq!(pos.sec, 20);
         assert_eq!(pos.min, Some(17));
         assert_eq!(pos.hour, Some(0));
-        assert_eq!(pos.round, 2);
+        assert_eq!(pos.round, 1);
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_per_wheel() {
+        let wheel = MulitWheel::new();
+        // 10:20:30
+        wheel.set_wheel_positions(30, 20, 10);
+
+        // Second wheel task: only the second counts
+        let guide = WheelCascadeGuide {
+            sec: 35,
+            min: None,
+            hour: None,
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), 5);
+
+        // Minute wheel task: a task 60 seconds away sits on the next minute
+        let guide = WheelCascadeGuide {
+            sec: 30,
+            min: Some(21),
+            hour: None,
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), 60);
+
+        // Hour wheel task: 10 seconds past the next hour
+        let guide = WheelCascadeGuide {
+            sec: 5,
+            min: Some(0),
+            hour: Some(11),
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), 39 * 60 + 35);
+
+        // The same task one day out
+        let guide = WheelCascadeGuide {
+            sec: 5,
+            min: Some(0),
+            hour: Some(11),
+            round: 1,
+        };
+        assert_eq!(
+            wheel.calculate_next_run_seconds(&guide),
+            SECONDS_PER_DAY + 39 * 60 + 35
+        );
+    }
+
+    #[test]
+    fn test_calculate_next_run_seconds_on_the_current_slot() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(0, 0, 0);
+
+        // A task due in exactly 24 hours lands on the slot the hand is on
+        let guide = WheelCascadeGuide {
+            sec: 0,
+            min: Some(0),
+            hour: Some(0),
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), SECONDS_PER_DAY);
+
+        // A task due in exactly one hour lands on the current minute
+        let guide = WheelCascadeGuide {
+            sec: 0,
+            min: Some(0),
+            hour: None,
+            round: 0,
+        };
+        assert_eq!(wheel.calculate_next_run_seconds(&guide), SECONDS_PER_HOUR);
     }
 
     #[test]
@@ -1408,12 +1567,13 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_next_run_seconds_same_time() {
+    fn test_calculate_next_run_seconds_on_its_own_slot() {
         let wheel = MulitWheel::new();
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target time is exactly the same as current time
+        // A task sitting on the slot the hour hand is on has just missed it,
+        // so it waits for the next visit of that slot.
         let guide = WheelCascadeGuide {
             sec: 45,
             min: Some(30),
@@ -1421,9 +1581,8 @@ mod tests {
             round: 0,
         };
 
-        // Should return 0 seconds (task should execute immediately)
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 0);
+        assert_eq!(result, SECONDS_PER_DAY);
     }
 
     #[test]
@@ -1470,7 +1629,8 @@ mod tests {
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target time is same as current but with 1 round (next day)
+        // Same slot, so the task waits out the visit that follows the one it
+        // just missed (24 hours) plus the extra lap it carries (1 round)
         let guide = WheelCascadeGuide {
             sec: 45,
             min: Some(30),
@@ -1478,9 +1638,8 @@ mod tests {
             round: 1,
         };
 
-        // Expected: 0 + 1 * 24 * 3600 = 86400 seconds (1 day)
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 86400);
+        assert_eq!(result, 2 * SECONDS_PER_DAY);
     }
 
     #[test]
@@ -1509,7 +1668,7 @@ mod tests {
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target with only seconds specified (min and hour are None, treated as 0)
+        // A task on the second wheel is placed by its second slot only
         let guide = WheelCascadeGuide {
             sec: 50,
             min: None,
@@ -1517,11 +1676,9 @@ mod tests {
             round: 0,
         };
 
-        // Current: 10*3600 + 30*60 + 45 = 37845
-        // Target: 0*3600 + 0*60 + 50 = 50
-        // Since target < current, wrap around: 86400 - 37845 + 50 = 48605 seconds
+        // The second hand reaches slot 50 five seconds from now
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 48605);
+        assert_eq!(result, 5);
     }
 
     #[test]
@@ -1530,7 +1687,7 @@ mod tests {
         // Set current time to 10:30:45
         wheel.set_wheel_positions(45, 30, 10);
 
-        // Target with seconds and minutes, but no hour
+        // A task on the minute wheel ignores the hour
         let guide = WheelCascadeGuide {
             sec: 30,
             min: Some(35),
@@ -1538,11 +1695,9 @@ mod tests {
             round: 0,
         };
 
-        // Current: 10*3600 + 30*60 + 45 = 37845
-        // Target: 0*3600 + 35*60 + 30 = 2130
-        // Since target < current, wrap around: 86400 - 37845 + 2130 = 50685 seconds
+        // 10:30:45 -> 10:35:30 is 4 minutes 45 seconds
         let result = wheel.calculate_next_run_seconds(&guide);
-        assert_eq!(result, 50685);
+        assert_eq!(result, 4 * 60 + 45);
     }
 
     #[test]
@@ -1569,13 +1724,10 @@ mod tests {
         assert_eq!(status.cascade_guide.hour, None); // No hour since it's within the same hour
         assert_eq!(status.cascade_guide.round, 0);
 
-        // time_to_next_run should be exactly 300 seconds (5 minutes)
-        // Current: 10*3600 + 30*60 + 0 = 37800
-        // Target: 0*3600 + 35*60 + 0 = 2100
-        // Since target < current, wrap around: 86400 - 37800 + 2100 = 50700 seconds
+        // time_to_next_run should be the 300 seconds the task was configured with
         assert_eq!(
-            status.time_to_next_run, 50700,
-            "Expected time_to_next_run to be 50700 seconds, got {}",
+            status.time_to_next_run, 300,
+            "Expected time_to_next_run to be 300 seconds, got {}",
             status.time_to_next_run
         );
     }

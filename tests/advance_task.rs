@@ -95,6 +95,42 @@ async fn test_advance_task_trigger_immediately() {
     );
 }
 
+/// Test that the reported waiting time stays correct after the wheel has been
+/// running for a while.
+///
+/// The hour hand is no longer at zero after the first hour, which used to make
+/// the calculation treat the task's second and minute as an absolute time of
+/// day and report the best part of a day.
+#[tokio::test]
+async fn test_time_to_next_run_after_the_first_hour() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    // Let the wheel run for an hour of wheel time
+    for _ in 0..3600 {
+        timer.tick().await;
+    }
+    // Manual ticks are consumed asynchronously; wait for the backlog to drain
+    // so the wheel really is on the hour before scheduling the task.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(10)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let status = timer.task_status(1).expect("Task should exist");
+    assert!(
+        (8..=10).contains(&status.time_to_next_run),
+        "A 10 second task should report ~10 seconds, got {}",
+        status.time_to_next_run
+    );
+}
+
 /// Test advancing a non-existent task returns error.
 #[tokio::test]
 async fn test_advance_nonexistent_task() {
