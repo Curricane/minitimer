@@ -107,10 +107,12 @@ impl TaskBuilder {
 
     /// Sets the maximum number of concurrent executions for this task.
     ///
+    /// A limit of 0 would never allow the task to start, so it is raised to 1.
+    ///
     /// # Arguments
     /// * `max` - Maximum number of concurrent executions
     pub fn with_max_concurrency(&mut self, max: usize) -> &mut Self {
-        self.max_concurrency = max;
+        self.max_concurrency = max.max(1);
         self
     }
 

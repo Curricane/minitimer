@@ -122,13 +122,17 @@ impl MulitWheel {
         match self.try_start_task(task_id, max_concurrency) {
             Some(record_id) => {
                 let mut task_clone = task;
-                if !self.reschedule_task(&mut task_clone) {
-                    let _ = self.remove_task(task_id);
-                }
+                // A task with no execution left is dropped from the scheduler
+                // once this last execution finishes.
+                let is_last_execution = !self.reschedule_task(&mut task_clone);
+
                 let wheel = self.clone();
                 tokio::spawn(async move {
                     let _ = runner.run().await;
                     wheel.complete_task(task_id, record_id);
+                    if is_last_execution {
+                        let _ = wheel.remove_task(task_id);
+                    }
                 });
             }
             None => {
@@ -595,37 +599,36 @@ impl MulitWheel {
         let max_concurrency = task.max_concurrency;
 
         // Determine the wheel where the task should be placed based on the calculated cascade guide and record position information
-        let tracking_info = if let Some(hour) = next_guide.hour {
+        let (wheel_type, slot_num) = if let Some(hour) = next_guide.hour {
             self.hour_wheel.add_task(task.clone(), hour);
-            TaskTrackingInfo {
-                cascade_guide: next_guide,
-                wheel_type: WheelType::Hour,
-                slot_num: hour,
-                max_concurrency,
-                running_records: DashMap::new(),
-            }
+            (WheelType::Hour, hour)
         } else if let Some(min) = next_guide.min {
             self.min_wheel.add_task(task.clone(), min);
-            TaskTrackingInfo {
-                cascade_guide: next_guide,
-                wheel_type: WheelType::Minute,
-                slot_num: min,
-                max_concurrency,
-                running_records: DashMap::new(),
-            }
+            (WheelType::Minute, min)
         } else {
             self.sec_wheel.add_task(task.clone(), next_guide.sec);
-            TaskTrackingInfo {
-                cascade_guide: next_guide,
-                wheel_type: WheelType::Second,
-                slot_num: next_guide.sec,
-                max_concurrency,
-                running_records: DashMap::new(),
-            }
+            (WheelType::Second, next_guide.sec)
         };
 
-        // Update task tracking map
-        self.task_tracker_map.insert(task.task_id, tracking_info);
+        // Update the tracking entry in place. Replacing it would hand out a
+        // fresh, empty set of running records and drop the executions that are
+        // still in flight, which disables the concurrency limit.
+        self.task_tracker_map
+            .entry(task.task_id)
+            .and_modify(|info| {
+                info.cascade_guide = next_guide;
+                info.wheel_type = wheel_type;
+                info.slot_num = slot_num;
+                info.max_concurrency = max_concurrency;
+            })
+            .or_insert_with(|| TaskTrackingInfo {
+                cascade_guide: next_guide,
+                wheel_type,
+                slot_num,
+                max_concurrency,
+                running_records: DashMap::new(),
+            });
+
         Ok(())
     }
 
