@@ -27,14 +27,19 @@ async fn test_task_executes_once() {
 
     timer.add_task(task).unwrap();
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
 
     let count = counter.load(Ordering::SeqCst);
-    assert!(
-        count >= 1,
-        "Task should execute at least once, but executed {} times",
+    assert_eq!(
+        count, 1,
+        "Once task should execute exactly once, executed {} times",
         count
     );
+    assert!(
+        !timer.contains_task(1),
+        "Once task should be removed after its single execution"
+    );
+    assert_eq!(timer.task_count(), 0, "No task should be left scheduled");
 }
 
 /// Test that a task is not fired before its delay has elapsed.
@@ -103,19 +108,23 @@ async fn test_countdown_task() {
     let timer = MiniTimer::new();
 
     let task = TaskBuilder::new(1)
-        .with_frequency_count_down_by_seconds(3, 1)
+        .with_frequency_count_down_by_seconds(2, 1)
         .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
 
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
 
     let count = counter.load(Ordering::SeqCst);
-    assert!(
-        (1..=4).contains(&count),
-        "Countdown task should execute limited times, executed {} times",
+    assert_eq!(
+        count, 2,
+        "Countdown task should execute exactly 2 times, executed {} times",
         count
+    );
+    assert!(
+        !timer.contains_task(1),
+        "Countdown task should be removed once it has run its executions"
     );
 }
 

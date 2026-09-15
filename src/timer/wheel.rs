@@ -8,10 +8,7 @@ use log::warn;
 
 use crate::{
     error::TaskError,
-    task::{
-        RecordId, Task, TaskId, TaskState,
-        frequency::{FrequencySeconds, FrequencyState},
-    },
+    task::{RecordId, Task, TaskId, TaskState, frequency::FrequencySeconds},
     timer::slot::Slot,
     utils::timestamp,
 };
@@ -112,6 +109,9 @@ impl MulitWheel {
     /// rescheduled for its next execution. If concurrency is full, the task
     /// is re-added to the wheel to retry on the next tick.
     ///
+    /// A task whose frequency has no execution left is removed from the
+    /// scheduler once it has been started.
+    ///
     /// # Arguments
     /// * `task` - The task to process
     pub(crate) fn process_arrived_task(&self, task: Task) {
@@ -122,7 +122,9 @@ impl MulitWheel {
         match self.try_start_task(task_id, max_concurrency) {
             Some(record_id) => {
                 let mut task_clone = task;
-                self.reschedule_task(&mut task_clone);
+                if !self.reschedule_task(&mut task_clone) {
+                    let _ = self.remove_task(task_id);
+                }
                 let wheel = self.clone();
                 tokio::spawn(async move {
                     let _ = runner.run().await;
@@ -130,7 +132,12 @@ impl MulitWheel {
                 });
             }
             None => {
-                let _ = self.add_task(task);
+                if task.frequency.peek_alarm_timestamp().is_some() {
+                    let _ = self.add_task(task);
+                } else {
+                    // The only remaining execution was skipped, so the task is done.
+                    let _ = self.remove_task(task_id);
+                }
             }
         }
     }
@@ -140,34 +147,14 @@ impl MulitWheel {
     /// This is called after a task completes execution to schedule its next run
     /// based on its frequency settings.
     ///
-    /// Returns `true` if the task was successfully rescheduled, `false` otherwise.
+    /// Returns `true` if the task was successfully rescheduled, `false` if it
+    /// has no execution left.
     pub(crate) fn reschedule_task(&self, task: &mut Task) -> bool {
-        match &task.frequency {
-            FrequencyState::SecondsRepeated(_) => {
-                // For repeated tasks, let add_task handle advancing the frequency state
-                // to avoid double-advancing which causes incorrect time_to_next_run
-                let has_next = task.frequency.peek_alarm_timestamp().is_some();
-                if has_next {
-                    let _ = self.add_task(task.clone());
-                    return true;
-                }
-            }
-            FrequencyState::SecondsCountDown(_, _) => {
-                // For countdown tasks, maintain the original behavior:
-                // advance state here, then add_task will advance again.
-                // This ensures countdown tasks execute the correct number of times.
-                if let Some(next_timestamp) = task.next_alarm_timestamp() {
-                    let next_alarm_sec = next_timestamp.saturating_sub(timestamp());
-                    if next_alarm_sec > 0 {
-                        let next_guide = self.cal_next_hand_position(next_alarm_sec);
-                        task.set_wheel_position(next_guide);
-                        let _ = self.add_task(task.clone());
-                        return true;
-                    }
-                }
-            }
+        if task.frequency.peek_alarm_timestamp().is_none() {
+            return false;
         }
-        false
+
+        self.add_task(task.clone()).is_ok()
     }
 
     /// Calculates the next wheel position for a task based on the time until its next execution.
