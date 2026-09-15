@@ -16,6 +16,7 @@ MiniTimer is a lightweight timer library built on the Tokio runtime, designed fo
 - **Task concurrency control**: Supports setting maximum concurrency for each task
 - **Dynamic task management**: Supports dynamically adding, canceling, removing and replacing tasks at runtime
 - **Testable scheduling**: Tasks can be driven by hand, tick by tick, without waiting for the clock
+- **Stops with its handle**: Dropping the last handle stops the tick source and the event loop, so a forgotten `stop` cannot leave a timer running in the background
 - **Fully async**: Built on Tokio runtime with async/await support
 
 ## Installation
@@ -245,6 +246,7 @@ Tasks are distributed across these wheels based on their execution time. As the 
 - The wheel moves with ticks. A runtime that is not polled (a suspended process, a blocked executor) delays tasks until it is polled again
 - A task failure is logged through the `log` crate; it does not stop the timer or the task's remaining executions
 - A wall clock timer can be combined with `tick()`, but the drift-free timing guarantees only apply to `MiniTimer::new_manual`
+- `stop()` is final and does not wait for the event loop to exit; dropping the last handle stops the timer as well, so a timer never outlives the code that owns it
 
 ## Examples
 

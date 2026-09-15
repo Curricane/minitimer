@@ -46,6 +46,11 @@
 //! ```
 //!
 //! See the [README](https://github.com/Curricane/minitimer) for a full guide.
+//!
+//! A timer owns two spawned tasks — a tick source and the event loop that
+//! applies its ticks — and [`MiniTimer::stop`] as well as dropping the last
+//! handle to the timer shut both of them down, so a timer does not outlive the
+//! code that holds it.
 
 pub mod error;
 pub(crate) mod mini_timer;

@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender, bounded, unbounded};
+use tokio::sync::Notify;
 
 use crate::error::TaskError;
 use crate::task::{Task, TaskId};
@@ -13,13 +14,58 @@ use crate::timer::{Timer, TimerEvent};
 ///
 /// MiniTimer is the primary interface for users to interact with the timer system.
 /// It handles task scheduling, execution, and concurrency control.
+///
+/// A running timer owns two spawned tasks — a tick source and the event loop
+/// that applies the ticks — and stops both when [`MiniTimer::stop`] is called
+/// or when the last handle to it is dropped.
 pub struct MiniTimer {
+    inner: Arc<Inner>,
+}
+
+/// The state every handle of a timer shares.
+///
+/// Keeping it behind one `Arc` is what gives a timer an owner: the spawned
+/// tasks hold the pieces they need — the wheel, the event channel, the tick
+/// source — but never an `Arc<Inner>`, so the last handle going away drops
+/// `Inner`, and its `Drop` winds the timer down.
+struct Inner {
     wheel: Arc<MulitWheel>,
     event_sender: Sender<TimerEvent>,
     /// One notification per applied tick, so `tick` can wait for its effect.
     tick_applied: Receiver<()>,
     timer: Timer,
     is_running: Arc<AtomicBool>,
+    /// Wakes the event loop so it can wind down. `Drop` cannot await a channel
+    /// send, and the event channel can be full.
+    shutdown: Arc<Notify>,
+}
+
+impl Inner {
+    /// Spawns the tick source, which sends a tick every second until it is
+    /// stopped. Requires a Tokio runtime.
+    fn spawn_tick_source(&self) {
+        let mut ticker = self.timer.clone();
+        tokio::spawn(async move {
+            ticker.run().await;
+        });
+    }
+
+    /// Stops the tick source and wakes the event loop, which then exits and
+    /// releases the wheel.
+    fn shut_down(&self) {
+        self.timer.stop();
+        let _ = self.event_sender.try_send(TimerEvent::StopTimer);
+        self.shutdown.notify_one();
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        // A timer that is dropped instead of stopped would otherwise leave the
+        // tick source and the event loop alive for good, still executing the
+        // tasks of a timer that nobody holds any more.
+        self.shut_down();
+    }
 }
 
 impl MiniTimer {
@@ -56,33 +102,26 @@ impl MiniTimer {
         let wheel = Arc::new(MulitWheel::new());
         let timer = Timer::new(event_sender.clone());
         let is_running = Arc::new(AtomicBool::new(true));
+        let shutdown = Arc::new(Notify::new());
 
-        if follow_wall_clock {
-            let mut ticker = timer.clone();
-            tokio::spawn(async move {
-                ticker.run().await;
-            });
-        }
-
-        let loop_wheel = wheel.clone();
-        let loop_running = is_running.clone();
-        tokio::spawn(async move {
-            Self::event_loop(
-                loop_wheel,
-                event_receiver,
-                tick_applied_sender,
-                loop_running,
-            )
-            .await;
-        });
-
-        Self {
-            wheel,
+        let inner = Arc::new(Inner {
+            wheel: wheel.clone(),
             event_sender,
             tick_applied,
             timer,
             is_running,
+            shutdown: shutdown.clone(),
+        });
+
+        if follow_wall_clock {
+            inner.spawn_tick_source();
         }
+
+        tokio::spawn(async move {
+            Self::event_loop(wheel, event_receiver, tick_applied_sender, shutdown).await;
+        });
+
+        Self { inner }
     }
 
     /// Consumes timer events until the timer is stopped.
@@ -94,9 +133,24 @@ impl MiniTimer {
         wheel: Arc<MulitWheel>,
         event_receiver: Receiver<TimerEvent>,
         tick_applied: Sender<()>,
-        is_running: Arc<AtomicBool>,
+        shutdown: Arc<Notify>,
     ) {
-        while let Ok(event) = event_receiver.recv().await {
+        loop {
+            let event = tokio::select! {
+                // Shutting down outranks the events that are still queued, so
+                // that a stopped timer does not apply a tick that was already
+                // waiting in the channel.
+                biased;
+
+                _ = shutdown.notified() => break,
+
+                event = event_receiver.recv() => match event {
+                    Ok(event) => event,
+                    // Every sender is gone, so no event can arrive any more.
+                    Err(_) => break,
+                },
+            };
+
             match event {
                 TimerEvent::Tick => {
                     wheel.tick();
@@ -111,8 +165,6 @@ impl MiniTimer {
                 TimerEvent::StopTimer => break,
             }
         }
-
-        is_running.store(false, Ordering::Relaxed);
     }
 
     /// Advances the timer by one tick (one second).
@@ -122,12 +174,18 @@ impl MiniTimer {
     /// this returns. Use [`MiniTimer::new_manual`] to keep a timer from ticking
     /// on its own, or [`MiniTimer::elapse`] to move it by more than a second.
     pub async fn tick(&self) {
-        if self.event_sender.send(TimerEvent::Tick).await.is_err() {
+        if self
+            .inner
+            .event_sender
+            .send(TimerEvent::Tick)
+            .await
+            .is_err()
+        {
             // The event loop is gone, so there is nothing to wait for.
             return;
         }
 
-        let _ = self.tick_applied.recv().await;
+        let _ = self.inner.tick_applied.recv().await;
     }
 
     /// Advances the timer by the given duration, one tick per second.
@@ -151,13 +209,13 @@ impl MiniTimer {
     /// is normally called with a timer that has been stopped.
     pub async fn wait_for_idle(&self) {
         loop {
-            let idle = self.wheel.idle_notified();
+            let idle = self.inner.wheel.idle_notified();
             tokio::pin!(idle);
             // Register interest first: a completion between the check below and
             // the await would otherwise be missed.
             idle.as_mut().enable();
 
-            if self.wheel.get_running_tasks().is_empty() {
+            if self.inner.wheel.get_running_tasks().is_empty() {
                 return;
             }
 
@@ -174,7 +232,7 @@ impl MiniTimer {
     /// * `Ok(())` - If the task was successfully added
     /// * `Err(TaskError)` - If there was an error adding the task
     pub fn add_task(&self, task: Task) -> Result<(), TaskError> {
-        self.wheel.add_task(task)
+        self.inner.wheel.add_task(task)
     }
 
     /// Removes a task from the timer system.
@@ -185,7 +243,7 @@ impl MiniTimer {
     /// # Returns
     /// The removed task if it existed, None otherwise.
     pub fn remove_task(&self, task_id: TaskId) -> Option<Task> {
-        self.wheel.remove_task(task_id)
+        self.inner.wheel.remove_task(task_id)
     }
 
     /// Checks if a task exists in the timer system.
@@ -196,7 +254,7 @@ impl MiniTimer {
     /// # Returns
     /// `true` if the task exists, `false` otherwise.
     pub fn contains_task(&self, task_id: TaskId) -> bool {
-        self.wheel.task_tracking_info(task_id).is_some()
+        self.inner.wheel.task_tracking_info(task_id).is_some()
     }
 
     /// Gets the total number of tasks in the timer system.
@@ -204,7 +262,7 @@ impl MiniTimer {
     /// # Returns
     /// The number of tasks currently scheduled.
     pub fn task_count(&self) -> usize {
-        self.wheel.task_tracker_map.len()
+        self.inner.wheel.task_tracker_map.len()
     }
 
     /// Gets a list of all pending tasks.
@@ -215,7 +273,7 @@ impl MiniTimer {
     /// # Returns
     /// A vector of task IDs that are currently pending execution.
     pub fn get_pending_tasks(&self) -> Vec<TaskId> {
-        self.wheel.get_all_pending_tasks()
+        self.inner.wheel.get_all_pending_tasks()
     }
 
     /// Gets a list of all running tasks.
@@ -223,7 +281,7 @@ impl MiniTimer {
     /// # Returns
     /// A vector of task IDs that are currently running.
     pub fn get_running_tasks(&self) -> Vec<TaskId> {
-        self.wheel.get_running_tasks()
+        self.inner.wheel.get_running_tasks()
     }
 
     /// Gets the current status of a task.
@@ -235,7 +293,7 @@ impl MiniTimer {
     /// * `Some(TaskStatus)` - If the task exists, containing all tracking information
     /// * `None` - If the task doesn't exist
     pub fn task_status(&self, task_id: TaskId) -> Option<TaskStatus> {
-        self.wheel.task_status(task_id)
+        self.inner.wheel.task_status(task_id)
     }
 
     /// Advances a task's scheduled execution time.
@@ -263,7 +321,8 @@ impl MiniTimer {
         reset_frequency: bool,
     ) -> Result<(), TaskError> {
         let duration_secs = duration.map(|d| d.as_secs());
-        self.wheel
+        self.inner
+            .wheel
             .accelerate_task(task_id, duration_secs, reset_frequency)
     }
 
@@ -281,23 +340,26 @@ impl MiniTimer {
     /// * `Ok(())` - If the task was successfully updated
     /// * `Err(TaskError)` - If the task doesn't exist
     pub fn update_task(&self, task_id: TaskId, new_task: Task) -> Result<(), TaskError> {
-        self.wheel.update_task(task_id, new_task)
+        self.inner.wheel.update_task(task_id, new_task)
     }
 
     /// Stops the timer system.
     ///
     /// Stops the tick source and shuts the event loop down, so the timer stops
-    /// executing tasks and the loop task does not outlive it. Calling `stop`
-    /// more than once has no further effect.
+    /// executing tasks and the loop task does not outlive it. This is final: a
+    /// stopped timer cannot be started again. Calling `stop` more than once has
+    /// no further effect, and dropping the last handle does the same thing.
+    ///
+    /// The call signals the shutdown rather than waiting for it: a tick that
+    /// the event loop is already applying can still land, and the loop task
+    /// takes a moment to exit. Use [`MiniTimer::wait_for_idle`] to wait for the
+    /// executions a tick started.
     pub async fn stop(&self) {
-        if !self.is_running.swap(false, Ordering::Relaxed) {
+        if !self.inner.is_running.swap(false, Ordering::AcqRel) {
             return;
         }
 
-        self.timer.stop();
-
-        // Wake the event loop so it can wind down instead of waiting forever.
-        let _ = self.event_sender.send(TimerEvent::StopTimer).await;
+        self.inner.shut_down();
     }
 
     /// Checks if the timer system is currently running.
@@ -305,7 +367,7 @@ impl MiniTimer {
     /// # Returns
     /// `true` if the timer is running, `false` otherwise.
     pub fn is_running(&self) -> bool {
-        self.is_running.load(Ordering::Relaxed)
+        self.inner.is_running.load(Ordering::Acquire)
     }
 }
 
@@ -318,11 +380,7 @@ impl Default for MiniTimer {
 impl Clone for MiniTimer {
     fn clone(&self) -> Self {
         Self {
-            wheel: self.wheel.clone(),
-            event_sender: self.event_sender.clone(),
-            tick_applied: self.tick_applied.clone(),
-            timer: self.timer.clone(),
-            is_running: self.is_running.clone(),
+            inner: self.inner.clone(),
         }
     }
 }

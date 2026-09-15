@@ -9,6 +9,47 @@ use std::time::Duration;
 use async_trait::async_trait;
 use minitimer::task::TaskRunner;
 
+/// The number of tasks the current runtime is still running.
+///
+/// A test that drops a timer uses this to see whether the tick source and the
+/// event loop survived the timer, instead of guessing from timing alone.
+pub fn alive_tasks() -> usize {
+    tokio::runtime::Handle::current()
+        .metrics()
+        .num_alive_tasks()
+}
+
+/// Waits for `counter` to reach at least `target`, and panics if it never does.
+pub async fn wait_for_count(counter: &Arc<AtomicU64>, target: u64) {
+    for _ in 0..120 {
+        if counter.load(Ordering::SeqCst) >= target {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    panic!(
+        "the task ran {} times, expected at least {target}",
+        counter.load(Ordering::SeqCst)
+    );
+}
+
+/// Waits for the runtime to shed the tasks a timer left behind, and reports how
+/// many are still alive so the caller can assert on the number.
+pub async fn wait_for_alive_tasks(baseline: usize) -> usize {
+    let mut alive = alive_tasks();
+
+    for _ in 0..100 {
+        if alive <= baseline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        alive = alive_tasks();
+    }
+
+    alive
+}
+
 /// A simple test task that increments a counter when executed.
 pub struct CounterTask {
     counter: Arc<AtomicU64>,
