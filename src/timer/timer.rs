@@ -74,6 +74,3 @@ impl Clone for Timer {
         }
     }
 }
-
-unsafe impl Send for Timer {}
-unsafe impl Sync for Timer {}
