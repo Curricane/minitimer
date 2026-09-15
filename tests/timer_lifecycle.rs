@@ -77,6 +77,48 @@ async fn test_timer_stop_functionality() {
     );
 }
 
+/// Test that a stopped timer no longer consumes timer events.
+#[tokio::test]
+async fn test_timer_stop_ends_the_event_loop() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(1)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let before_stop = counter.load(Ordering::SeqCst);
+    assert!(
+        before_stop >= 1,
+        "Task should execute before stopping, executed {} times",
+        before_stop
+    );
+
+    timer.stop().await;
+    assert!(!timer.is_running(), "Timer should be stopped");
+
+    // The event loop is gone, so manual ticks are ignored
+    for _ in 0..5 {
+        timer.tick().await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        before_stop,
+        "A stopped timer must not process any further event"
+    );
+
+    // Stopping again is harmless
+    timer.stop().await;
+}
+
 /// Test that timer can be cloned and used across different async contexts.
 #[tokio::test]
 async fn test_timer_clone() {

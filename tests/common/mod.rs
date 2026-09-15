@@ -64,6 +64,43 @@ impl FailingTask {
     }
 }
 
+/// A task that reports how many executions overlap in time.
+pub struct ConcurrencyProbe {
+    active: Arc<AtomicU64>,
+    peak: Arc<AtomicU64>,
+    delay_ms: u64,
+}
+
+impl ConcurrencyProbe {
+    pub fn new(active: Arc<AtomicU64>, peak: Arc<AtomicU64>, delay_ms: u64) -> Self {
+        Self {
+            active,
+            peak,
+            delay_ms,
+        }
+    }
+
+    /// The highest number of executions that were running at the same time.
+    pub fn peak(peak: &Arc<AtomicU64>) -> u64 {
+        peak.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl TaskRunner for ConcurrencyProbe {
+    type Output = ();
+
+    async fn run(&self) -> Result<Self::Output, Box<dyn std::error::Error + Send + Sync>> {
+        let running = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(running, Ordering::SeqCst);
+
+        tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl TaskRunner for FailingTask {
     type Output = ();

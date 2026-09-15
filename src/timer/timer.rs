@@ -19,13 +19,15 @@ pub struct Timer {
 impl Timer {
     /// Creates a new Timer instance.
     ///
+    /// The timer is armed on creation and runs until `stop()` is called.
+    ///
     /// # Arguments
     /// * `event_sender` - The channel sender for sending timer events
     pub fn new(event_sender: Sender<TimerEvent>) -> Self {
         Self {
             clock: Clock::new(),
             event_sender,
-            is_running: Arc::new(AtomicBool::new(false)),
+            is_running: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -45,8 +47,6 @@ impl Timer {
     ///
     /// The loop continues until stop() is called.
     pub async fn run(&mut self) {
-        self.is_running.store(true, Ordering::Relaxed);
-
         while self.is_running.load(Ordering::Relaxed) {
             self.clock.tick().await;
 

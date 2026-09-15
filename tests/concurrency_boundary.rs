@@ -10,37 +10,99 @@ use minitimer::MiniTimer;
 use minitimer::task::TaskBuilder;
 
 mod common;
-use common::{CounterTask, SlowTask};
+use common::{ConcurrencyProbe, CounterTask, SlowTask};
 
 /// Test max concurrency limit is respected.
+///
+/// Counts the executions that overlap in time rather than sampling the running
+/// task list, so a task that never starts cannot make the assertion pass.
 #[tokio::test]
 async fn test_max_concurrency_respected() {
-    let counter = Arc::new(AtomicU64::new(0));
+    let active = Arc::new(AtomicU64::new(0));
+    let peak = Arc::new(AtomicU64::new(0));
 
     let timer = MiniTimer::new();
 
-    // Create a task with max_concurrency = 1
+    // Task runs for 1.5s every second, so a 1 second limit is saturated.
     let task = TaskBuilder::new(1)
         .with_frequency_repeated_by_seconds(1)
         .with_max_concurrency(1)
-        .spawn_async(SlowTask::new(counter.clone(), 500))
+        .spawn_async(ConcurrencyProbe::new(active.clone(), peak.clone(), 1500))
         .unwrap();
 
     timer.add_task(task).unwrap();
 
-    // Wait for task to start executing
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_secs(6)).await;
 
-    // Get running tasks - should have at most 1
-    let running = timer.get_running_tasks();
+    let peak = ConcurrencyProbe::peak(&peak);
     assert!(
-        running.len() <= 1,
-        "Should have at most 1 running task due to max_concurrency = 1, found {}",
-        running.len()
+        peak <= 1,
+        "max_concurrency = 1 must not allow overlapping executions, peak was {}",
+        peak
+    );
+    assert!(
+        active.load(Ordering::SeqCst) <= 1,
+        "At most one execution may be in flight"
+    );
+}
+
+/// Test that sampling the running task list reflects an in-flight execution.
+#[tokio::test]
+async fn test_running_tasks_are_reported() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(1)
+        .spawn_async(SlowTask::new(counter.clone(), 2000))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    assert_eq!(
+        timer.get_running_tasks(),
+        vec![1],
+        "A task whose execution is in flight should be reported as running"
     );
 
-    // Cleanup
-    timer.remove_task(1);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    assert!(
+        timer.get_running_tasks().is_empty(),
+        "No execution should be in flight once the runner has finished"
+    );
+    assert!(
+        !timer.contains_task(1),
+        "A finished task should have left the scheduler"
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+}
+
+/// Test that a concurrency limit of zero still lets the task run.
+#[tokio::test]
+async fn test_zero_concurrency_limit_is_raised() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(1)
+        .with_max_concurrency(0)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "A task with a zero concurrency limit should still execute"
+    );
 }
 
 /// Test task with 1 second interval (minimum practical interval).

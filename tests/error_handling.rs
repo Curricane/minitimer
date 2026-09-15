@@ -13,21 +13,22 @@ use minitimer::task::TaskBuilder;
 mod common;
 use common::CounterTask;
 
-/// Test adding a task with duplicate ID fails.
+/// Test adding a task with an existing ID replaces the previous schedule.
 #[tokio::test]
 async fn test_add_duplicate_task() {
-    let counter = Arc::new(AtomicU64::new(0));
+    let replaced_counter = Arc::new(AtomicU64::new(0));
+    let replacement_counter = Arc::new(AtomicU64::new(0));
 
     let timer = MiniTimer::new();
 
     let task1 = TaskBuilder::new(1)
-        .with_frequency_once_by_seconds(60)
-        .spawn_async(CounterTask::new(counter.clone()))
+        .with_frequency_once_by_seconds(2)
+        .spawn_async(CounterTask::new(replaced_counter.clone()))
         .unwrap();
 
     let task2 = TaskBuilder::new(1)
-        .with_frequency_once_by_seconds(120)
-        .spawn_async(CounterTask::new(counter.clone()))
+        .with_frequency_once_by_seconds(5)
+        .spawn_async(CounterTask::new(replacement_counter.clone()))
         .unwrap();
 
     timer.add_task(task1).unwrap();
@@ -44,6 +45,21 @@ async fn test_add_duplicate_task() {
         timer.task_count(),
         1,
         "Should have only 1 task after replacement"
+    );
+
+    // The replaced schedule must not fire
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        replaced_counter.load(Ordering::SeqCst),
+        0,
+        "The replaced task should have been cancelled"
+    );
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        replacement_counter.load(Ordering::SeqCst),
+        1,
+        "The replacement should have run once"
     );
 }
 
