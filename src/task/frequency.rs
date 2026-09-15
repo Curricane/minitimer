@@ -31,6 +31,27 @@ impl FrequencySeconds {
             Self::CountDown(_, seconds) => *seconds,
         }
     }
+
+    /// Validates that the frequency describes a schedulable task.
+    ///
+    /// # Returns
+    /// * `Ok(())` - If the interval and execution count are usable
+    /// * `Err(String)` - A description of the invalid configuration
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.interval() == 0 {
+            return Err(format!("interval must be greater than 0 seconds: {self:?}"));
+        }
+
+        if let Self::CountDown(count_down, _) = self
+            && *count_down == 0
+        {
+            return Err(format!(
+                "countdown execution count must be greater than 0: {self:?}"
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for FrequencySeconds {
@@ -55,21 +76,18 @@ impl From<FrequencySeconds> for FrequencyState {
     fn from(frequency: FrequencySeconds) -> Self {
         match frequency {
             FrequencySeconds::Once(seconds) => {
-                assert!(seconds > 0, "once frequency must be greater than 0");
                 let state: SecondsState = ((timestamp() + seconds)..)
                     .step_by(seconds as usize)
                     .peekable();
                 FrequencyState::SecondsRepeated(state)
             }
             FrequencySeconds::Repeated(seconds) => {
-                assert!(seconds > 0, "repeated frequency must be greater than 0");
                 let state: SecondsState = ((timestamp() + seconds)..)
                     .step_by(seconds as usize)
                     .peekable();
                 FrequencyState::SecondsRepeated(state)
             }
             FrequencySeconds::CountDown(count_down, seconds) => {
-                assert!(seconds > 0, "countdown initial must be greater than 0");
                 let state: SecondsState = (timestamp() + seconds..)
                     .step_by(count_down as usize)
                     .peekable();
