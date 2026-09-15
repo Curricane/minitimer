@@ -11,7 +11,7 @@ use minitimer::MiniTimer;
 use minitimer::task::TaskBuilder;
 
 mod common;
-use common::CounterTask;
+use common::{CounterTask, alive_tasks, wait_for_alive_tasks, wait_for_count};
 
 /// Test that timer start and stop work correctly.
 #[tokio::test]
@@ -119,6 +119,133 @@ async fn test_timer_stop_ends_the_event_loop() {
     timer.stop().await;
 }
 
+/// Test that a timer does not outlive its last handle.
+///
+/// A timer that is dropped instead of stopped used to keep its tick source and
+/// its event loop alive for good, and kept running the tasks it had scheduled.
+#[tokio::test]
+async fn test_drop_without_stop_shuts_the_timer_down() {
+    let baseline = alive_tasks();
+    let counter = Arc::new(AtomicU64::new(0));
+
+    {
+        let timer = MiniTimer::new();
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(1)
+            .spawn_async(CounterTask::new(counter.clone()))
+            .unwrap();
+        timer.add_task(task).unwrap();
+
+        wait_for_count(&counter, 1).await;
+    }
+
+    let alive = wait_for_alive_tasks(baseline).await;
+    assert!(
+        alive <= baseline,
+        "dropping the timer left {} task(s) running",
+        alive.saturating_sub(baseline)
+    );
+
+    let runs_at_drop = counter.load(Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        runs_at_drop,
+        "a dropped timer must not keep executing its tasks"
+    );
+}
+
+/// Test that every clone of a timer has to be dropped.
+#[tokio::test]
+async fn test_drop_of_every_clone_shuts_the_timer_down() {
+    let baseline = alive_tasks();
+    let counter = Arc::new(AtomicU64::new(0));
+
+    {
+        let timer = MiniTimer::new();
+
+        let task = TaskBuilder::new(1)
+            .with_frequency_repeated_by_seconds(1)
+            .spawn_async(CounterTask::new(counter.clone()))
+            .unwrap();
+        timer.add_task(task).unwrap();
+
+        let second_handle = timer.clone();
+        wait_for_count(&counter, 1).await;
+
+        // One handle going away must not shut the timer down
+        drop(timer);
+        wait_for_count(&counter, 2).await;
+
+        drop(second_handle);
+    }
+
+    let alive = wait_for_alive_tasks(baseline).await;
+    assert!(
+        alive <= baseline,
+        "dropping every handle left {} task(s) running",
+        alive.saturating_sub(baseline)
+    );
+}
+
+/// Test that a manual timer is released as well.
+///
+/// A manual timer has no tick source, so this guards the other half of the
+/// ownership rule: no spawned task may hold the `Arc<Inner>` itself, or the
+/// last handle could not release the event loop.
+#[tokio::test]
+async fn test_drop_without_stop_shuts_a_manual_timer_down() {
+    let baseline = alive_tasks();
+
+    let timer = MiniTimer::new_manual();
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(1)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+    timer.add_task(task).unwrap();
+
+    drop(timer);
+
+    let alive = wait_for_alive_tasks(baseline).await;
+    assert!(
+        alive <= baseline,
+        "dropping a manual timer left {} task(s) running",
+        alive.saturating_sub(baseline)
+    );
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+}
+
+/// Test that stopping a timer before dropping it stays leak free.
+///
+/// Stopping already releases the event loop on its own, so this guards the
+/// combination rather than the fix itself.
+#[tokio::test]
+async fn test_stop_then_drop_shuts_the_timer_down() {
+    let baseline = alive_tasks();
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_repeated_by_seconds(1)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+    timer.add_task(task).unwrap();
+
+    wait_for_count(&counter, 1).await;
+    timer.stop().await;
+    drop(timer);
+
+    let alive = wait_for_alive_tasks(baseline).await;
+    assert!(
+        alive <= baseline,
+        "stopping and dropping the timer left {} task(s) running",
+        alive.saturating_sub(baseline)
+    );
+}
 /// Test that timer can be cloned and used across different async contexts.
 #[tokio::test]
 async fn test_timer_clone() {
