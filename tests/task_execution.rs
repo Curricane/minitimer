@@ -128,6 +128,37 @@ async fn test_countdown_task() {
     );
 }
 
+/// Test that countdown executions are spaced by the configured interval.
+#[tokio::test]
+async fn test_countdown_uses_configured_interval() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    // 2 executions, 2 seconds apart
+    let task = TaskBuilder::new(1)
+        .with_frequency_count_down_by_seconds(2, 2)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    // Only the first execution is due after 2.5 seconds
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "Countdown with a 2 second interval should have run once after 2.5 seconds"
+    );
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "Both countdown executions should have run after 4.5 seconds"
+    );
+}
+
 /// Test countdown with 1 execution.
 #[tokio::test]
 async fn test_countdown_one_execution() {

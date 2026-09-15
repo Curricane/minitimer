@@ -131,7 +131,7 @@ impl From<FrequencySeconds> for FrequencyState {
             FrequencySeconds::Once(seconds) => Self::new(now + seconds, seconds, Some(1)),
             FrequencySeconds::Repeated(seconds) => Self::new(now + seconds, seconds, None),
             FrequencySeconds::CountDown(count_down, seconds) => {
-                Self::new(now + seconds, count_down, Some(count_down))
+                Self::new(now + seconds, seconds, Some(count_down))
             }
         }
     }
@@ -184,6 +184,17 @@ mod tests {
         assert!(state.next_alarm_timestamp().is_some());
         assert_eq!(state.peek_alarm_timestamp(), None);
         assert_eq!(state.next_alarm_timestamp(), None);
+    }
+
+    #[test]
+    fn test_frequency_state_from_countdown_uses_the_configured_interval() {
+        let freq = FrequencySeconds::CountDown(3, 5);
+        let mut state = FrequencyState::from(freq);
+
+        let now = crate::utils::timestamp();
+        assert_eq!(state.next_alarm_timestamp(), Some(now + 5));
+        assert_eq!(state.next_alarm_timestamp(), Some(now + 10));
+        assert_eq!(state.next_alarm_timestamp(), Some(now + 15));
     }
 
     #[test]
