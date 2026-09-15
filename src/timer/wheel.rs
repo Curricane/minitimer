@@ -132,7 +132,9 @@ impl MulitWheel {
 
                 let wheel = self.clone();
                 tokio::spawn(async move {
-                    let _ = runner.run().await;
+                    if let Err(err) = runner.run().await {
+                        warn!("task {task_id} failed: {err}");
+                    }
                     wheel.complete_task(task_id, record_id);
                     if is_last_execution {
                         let _ = wheel.remove_task(task_id);
