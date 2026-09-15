@@ -239,6 +239,7 @@ Tasks are distributed across these wheels based on their execution time. As the 
 
 ## Notes and Limits
 
+- Requires Rust 1.88 or newer (edition 2024)
 - The timer requires a Tokio runtime and has to be constructed inside one
 - Time advances in whole seconds. Delays are resolved to the second, so a wall clock timer may run a task up to a second later than requested
 - The wheel moves with ticks. A runtime that is not polled (a suspended process, a blocked executor) delays tasks until it is polled again
