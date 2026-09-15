@@ -11,7 +11,7 @@ use minitimer::MiniTimer;
 use minitimer::task::TaskBuilder;
 
 mod common;
-use common::{CounterTask, SlowTask};
+use common::{CounterTask, SlowTask, send_tick_without_waiting};
 
 /// Test that a manual timer only moves when it is told to.
 #[tokio::test]
@@ -134,4 +134,34 @@ async fn test_wait_for_idle_waits_for_running_tasks() {
         "A task that has run its last execution should be gone"
     );
     assert_eq!(timer.task_count(), 0);
+}
+
+/// Test that a tick waits for the tick it sent, even when an earlier tick was
+/// applied while nobody was waiting for it.
+#[tokio::test]
+async fn test_tick_waits_for_its_own_tick() {
+    let timer = MiniTimer::new_manual();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(10)
+        .spawn_async(|| async {})
+        .unwrap();
+    timer.add_task(task).unwrap();
+
+    // This tick is applied while nobody waits for it.
+    send_tick_without_waiting(&timer);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        timer.task_status(1).unwrap().time_to_next_run,
+        9,
+        "the tick that nobody waited for should have moved the wheel"
+    );
+
+    timer.tick().await;
+
+    assert_eq!(
+        timer.task_status(1).unwrap().time_to_next_run,
+        8,
+        "tick must wait until its own tick has been applied"
+    );
 }

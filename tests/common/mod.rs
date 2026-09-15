@@ -6,7 +6,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use std::future::Future;
+use std::task::{Context, Waker};
+
 use async_trait::async_trait;
+use minitimer::MiniTimer;
 use minitimer::task::TaskRunner;
 
 /// The number of tasks the current runtime is still running.
@@ -48,6 +52,20 @@ pub async fn wait_for_alive_tasks(baseline: usize) -> usize {
     }
 
     alive
+}
+
+/// Leaves a tick in the timer's event channel without waiting for it.
+///
+/// The future is polled once, which sends the event, and then dropped: the tick
+/// is applied while nobody waits for it.
+pub fn send_tick_without_waiting(timer: &MiniTimer) {
+    let mut tick = std::pin::pin!(timer.tick());
+    let mut context = Context::from_waker(Waker::noop());
+
+    assert!(
+        tick.as_mut().poll(&mut context).is_pending(),
+        "polling once sends the tick and then waits for it to be applied"
+    );
 }
 
 /// A simple test task that increments a counter when executed.

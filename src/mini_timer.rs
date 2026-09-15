@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use async_channel::{Receiver, Sender, bounded, unbounded};
-use tokio::sync::Notify;
+use async_channel::{Receiver, Sender, bounded};
+use tokio::sync::{Notify, watch};
 
 use crate::error::TaskError;
 use crate::task::{Task, TaskId};
@@ -31,8 +31,10 @@ pub struct MiniTimer {
 struct Inner {
     wheel: Arc<MulitWheel>,
     event_sender: Sender<TimerEvent>,
-    /// One notification per applied tick, so `tick` can wait for its effect.
-    tick_applied: Receiver<()>,
+    /// How many ticks the event loop has applied. `tick` notes the count
+    /// before it sends its event and waits for the count to pass that value, so
+    /// a tick applied for somebody else cannot make it return early.
+    applied_ticks: watch::Receiver<u64>,
     timer: Timer,
     is_running: Arc<AtomicBool>,
     /// Wakes the event loop so it can wind down. `Drop` cannot await a channel
@@ -97,7 +99,7 @@ impl MiniTimer {
 
     fn build(follow_wall_clock: bool) -> Self {
         let (event_sender, event_receiver) = bounded(16);
-        let (tick_applied_sender, tick_applied) = unbounded();
+        let (applied_ticks_sender, applied_ticks) = watch::channel(0u64);
 
         let wheel = Arc::new(MulitWheel::new());
         let timer = Timer::new(event_sender.clone());
@@ -107,7 +109,7 @@ impl MiniTimer {
         let inner = Arc::new(Inner {
             wheel: wheel.clone(),
             event_sender,
-            tick_applied,
+            applied_ticks,
             timer,
             is_running,
             shutdown: shutdown.clone(),
@@ -118,7 +120,7 @@ impl MiniTimer {
         }
 
         tokio::spawn(async move {
-            Self::event_loop(wheel, event_receiver, tick_applied_sender, shutdown).await;
+            Self::event_loop(wheel, event_receiver, applied_ticks_sender, shutdown).await;
         });
 
         Self { inner }
@@ -132,7 +134,7 @@ impl MiniTimer {
     async fn event_loop(
         wheel: Arc<MulitWheel>,
         event_receiver: Receiver<TimerEvent>,
-        tick_applied: Sender<()>,
+        applied_ticks: watch::Sender<u64>,
         shutdown: Arc<Notify>,
     ) {
         loop {
@@ -160,7 +162,7 @@ impl MiniTimer {
                         wheel.process_arrived_task(task);
                     }
 
-                    let _ = tick_applied.try_send(());
+                    applied_ticks.send_modify(|applied| *applied += 1);
                 }
                 TimerEvent::StopTimer => break,
             }
@@ -173,7 +175,14 @@ impl MiniTimer {
     /// second — including any task that became due — has been scheduled when
     /// this returns. Use [`MiniTimer::new_manual`] to keep a timer from ticking
     /// on its own, or [`MiniTimer::elapse`] to move it by more than a second.
+    /// A tick the timer applied on its own does not count for this.
     pub async fn tick(&self) {
+        // The count is noted before the event is sent: a tick that was applied
+        // earlier, for a caller that is not waiting, must not be mistaken for
+        // this one.
+        let mut applied_ticks = self.inner.applied_ticks.clone();
+        let before = *applied_ticks.borrow_and_update();
+
         if self
             .inner
             .event_sender
@@ -185,7 +194,12 @@ impl MiniTimer {
             return;
         }
 
-        let _ = self.inner.tick_applied.recv().await;
+        while *applied_ticks.borrow_and_update() <= before {
+            // The loop wound down before it got to the tick.
+            if applied_ticks.changed().await.is_err() {
+                return;
+            }
+        }
     }
 
     /// Advances the timer by the given duration, one tick per second.
