@@ -512,12 +512,16 @@ impl MulitWheel {
         Some((task?, tracking_info))
     }
 
-    /// Get all pending tasks (tasks currently scheduled in the wheel).
+    /// Get all pending tasks (tasks scheduled and not currently running).
     ///
     /// # Returns
-    /// A vector of task IDs that are currently pending execution.
+    /// A vector of task IDs that are waiting for their next execution.
     pub fn get_all_pending_tasks(&self) -> Vec<TaskId> {
-        self.task_tracker_map.iter().map(|r| *r.key()).collect()
+        self.task_tracker_map
+            .iter()
+            .filter(|t| t.running_records.is_empty())
+            .map(|r| *r.key())
+            .collect()
     }
 
     /// Get all running task IDs (tasks that have at least one running record).

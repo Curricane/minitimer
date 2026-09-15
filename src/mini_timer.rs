@@ -133,6 +133,9 @@ impl MiniTimer {
 
     /// Gets a list of all pending tasks.
     ///
+    /// A task is pending while it waits for its next execution; a task with an
+    /// execution in flight is not pending.
+    ///
     /// # Returns
     /// A vector of task IDs that are currently pending execution.
     pub fn get_pending_tasks(&self) -> Vec<TaskId> {
