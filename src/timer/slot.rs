@@ -77,7 +77,7 @@ impl Slot {
     ) -> Vec<TaskId> {
         let mut task_id_vec = vec![];
 
-        for (_, task) in self.task_map.iter() {
+        for task in self.task_map.values() {
             if task.is_arrived(current_sec, current_min, current_hour) {
                 task_id_vec.push(task.task_id);
             }
