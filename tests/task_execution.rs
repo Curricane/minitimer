@@ -37,6 +37,40 @@ async fn test_task_executes_once() {
     );
 }
 
+/// Test that a task is not fired before its delay has elapsed.
+///
+/// The wheel hand must advance in step with elapsed time: the first tick of
+/// the internal clock used to be delivered immediately, which made every task
+/// fire one second early.
+#[tokio::test]
+async fn test_delay_is_not_shortened() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(3)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "Task scheduled for 3 seconds must not run after 2.5 seconds"
+    );
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    assert!(
+        counter.load(Ordering::SeqCst) >= 1,
+        "Task scheduled for 3 seconds should have run after 4.5 seconds"
+    );
+}
+
 /// Test repeated task execution.
 #[tokio::test]
 async fn test_repeated_task() {
