@@ -335,6 +335,80 @@ async fn test_repeated_task_spanning_wheels() {
     );
 }
 
+/// Test that a delay of exactly one hour fires when the hour is up.
+///
+/// The hour hand reaches the task's slot as it passes the hour boundary, which
+/// used to cost an extra rotation of the hour wheel.
+#[tokio::test]
+async fn test_exact_hour_delay_fires_on_time() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(3600)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    for _ in 0..3590 {
+        timer.tick().await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "A one hour delay must not fire before the hour"
+    );
+
+    for _ in 0..20 {
+        timer.tick().await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "A one hour delay should fire once the hour is up"
+    );
+}
+
+/// Test that a delay of more than a day survives the extra hour wheel laps.
+#[tokio::test]
+async fn test_more_than_a_day_delay_fires_on_time() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    // 25 hours: one lap of the hour wheel after reaching the target slot
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(25 * 3600)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    for _ in 0..(25 * 3600 - 10) {
+        timer.tick().await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "A 25 hour delay must not fire after 24 hours and 59 minutes"
+    );
+
+    for _ in 0..20 {
+        timer.tick().await;
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "A 25 hour delay should fire once the 25 hours are up"
+    );
+}
+
 /// Test that tick method works correctly for second-level tasks.
 #[tokio::test]
 async fn test_tick_method_works() {

@@ -203,7 +203,11 @@ impl MulitWheel {
 
         let total_hours = current_hour + hour_carry;
         let final_hour = total_hours % 24;
-        let round = total_hours / 24;
+
+        // The hand reaches the task's slot for the first time within the delay
+        // itself; `round` counts the further rotations the task has to survive
+        // before it is released, one rotation per hour-wheel lap.
+        let round = (hour_carry - 1) / 24;
 
         WheelCascadeGuide {
             sec: final_sec,
@@ -645,8 +649,13 @@ impl MulitWheel {
         let hand = self.min_wheel.hand.load(Ordering::Relaxed);
         let slot = self.min_wheel.slots.remove(&hand);
         if let Some((_, slot)) = slot {
-            for task in slot.task_map.into_values() {
+            for mut task in slot.task_map.into_values() {
                 let slot_num = task.cascade_guide.sec;
+
+                // The task is now scheduled by the second it holds, so the
+                // coarser positions must not take part in arrival checks.
+                task.cascade_guide.min = None;
+                task.cascade_guide.hour = None;
 
                 // Update information from tracking map
                 if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
@@ -674,25 +683,50 @@ impl MulitWheel {
         let mut new_slot = Slot::new();
         if let Some((_, slot)) = slot {
             for mut task in slot.task_map.into_values() {
-                let round = task.cascade_guide.round;
-                if round > 0 {
+                if task.cascade_guide.round > 0 {
+                    task.cascade_guide.round = task.cascade_guide.round.saturating_sub(1);
                     // Update round in tracking information
                     if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
-                        task.cascade_guide.round = task.cascade_guide.round.saturating_sub(1);
                         tracking_info.cascade_guide = task.cascade_guide;
                     }
                     new_slot.add_task(task);
                     continue;
-                } else {
-                    // Move from hour wheel to minute wheel
-                    if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task.task_id) {
-                        tracking_info.wheel_type = WheelType::Minute;
-                        tracking_info.slot_num = task.cascade_guide.min.unwrap();
-                        tracking_info.cascade_guide = task.cascade_guide;
-                    }
+                }
 
-                    let slot_num = task.cascade_guide.min.unwrap();
-                    self.min_wheel.add_task(task, slot_num);
+                // The hour position has served its purpose; the task is placed
+                // by minute and second from here on.
+                task.cascade_guide.hour = None;
+
+                match task.cascade_guide.min {
+                    // A zero minute offset means the task is due within the
+                    // minute that has just been filled, so it goes to the
+                    // second wheel instead of waiting a full minute rotation.
+                    Some(0) => {
+                        task.cascade_guide.min = None;
+                        let slot_num = task.cascade_guide.sec;
+                        if let Some(mut tracking_info) =
+                            self.task_tracker_map.get_mut(&task.task_id)
+                        {
+                            tracking_info.wheel_type = WheelType::Second;
+                            tracking_info.slot_num = slot_num;
+                            tracking_info.cascade_guide = task.cascade_guide;
+                        }
+                        self.sec_wheel.add_task(task, slot_num);
+                    }
+                    Some(slot_num) => {
+                        if let Some(mut tracking_info) =
+                            self.task_tracker_map.get_mut(&task.task_id)
+                        {
+                            tracking_info.wheel_type = WheelType::Minute;
+                            tracking_info.slot_num = slot_num;
+                            tracking_info.cascade_guide = task.cascade_guide;
+                        }
+                        self.min_wheel.add_task(task, slot_num);
+                    }
+                    None => {
+                        let slot_num = task.cascade_guide.sec;
+                        self.sec_wheel.add_task(task, slot_num);
+                    }
                 }
             }
         }
@@ -989,12 +1023,39 @@ mod tests {
         // 23:59:55
         wheel.set_wheel_positions(55, 59, 23);
 
-        // (55 + 10 = 65 => 5 seconds, 60 minutes => 0 minutes, 24 hours => 0 hours, 1 round)
+        // (55 + 10 = 65 => 5 seconds, 60 minutes => 0 minutes, 24 hours => 0 hours)
+        // The hour hand reaches the target slot on its next move, five seconds
+        // away, so no extra rotation is needed.
         let pos = wheel.cal_next_hand_position(10);
         assert_eq!(pos.sec, 5);
         assert_eq!(pos.min, Some(0));
         assert_eq!(pos.hour, Some(0));
+        assert_eq!(pos.round, 0);
+    }
+
+    #[test]
+    fn test_cal_next_hand_position_day_rounds() {
+        let wheel = MulitWheel::new();
+        wheel.set_wheel_positions(0, 0, 0);
+
+        // 24 hours: the target slot is reached exactly when the wheel comes
+        // back around, with no further rotation to survive.
+        let pos = wheel.cal_next_hand_position(24 * 3600);
+        assert_eq!(pos.hour, Some(0));
+        assert_eq!(pos.round, 0);
+
+        // 25 hours: one extra lap after reaching the target slot
+        let pos = wheel.cal_next_hand_position(25 * 3600);
+        assert_eq!(pos.hour, Some(1));
         assert_eq!(pos.round, 1);
+
+        // 48 hours: one extra lap, with the second one releasing the task
+        let pos = wheel.cal_next_hand_position(48 * 3600);
+        assert_eq!(pos.round, 1);
+
+        // 49 hours
+        let pos = wheel.cal_next_hand_position(49 * 3600);
+        assert_eq!(pos.round, 2);
     }
 
     #[test]
@@ -1023,11 +1084,11 @@ mod tests {
         // 100040 % 60 = 20 seconds
         // (30 + 100040/60) % 60 = (30 + 1667) % 60 = 1697 % 60 = 17 minutes
         // (20 + 1697/60) % 24 = (20 + 28) % 24 = 48 % 24 = 0 hours
-        // 48 / 24 = 2 rounds
+        // 28 hour-wheel moves => one extra lap
         assert_eq!(pos.sec, 20);
         assert_eq!(pos.min, Some(17));
         assert_eq!(pos.hour, Some(0));
-        assert_eq!(pos.round, 2);
+        assert_eq!(pos.round, 1);
     }
 
     #[test]
