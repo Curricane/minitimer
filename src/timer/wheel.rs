@@ -598,7 +598,10 @@ impl MulitWheel {
             None => return Ok(()),
         };
 
-        let next_alarm_sec = next_exec_timestamp - timestamp();
+        // A task is built (and its first alarm computed) before it reaches the
+        // timer, so the alarm can already have passed. Schedule it for the next
+        // tick in that case instead of underflowing.
+        let next_alarm_sec = next_exec_timestamp.saturating_sub(timestamp()).max(1);
         let next_guide = self.cal_next_hand_position(next_alarm_sec);
         task.cascade_guide = next_guide;
 

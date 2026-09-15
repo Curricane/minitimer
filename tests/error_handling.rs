@@ -4,7 +4,8 @@
 //! non-existent tasks, and invalid operations.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use minitimer::MiniTimer;
 use minitimer::task::TaskBuilder;
@@ -43,6 +44,39 @@ async fn test_add_duplicate_task() {
         timer.task_count(),
         1,
         "Should have only 1 task after replacement"
+    );
+}
+
+/// Test that a task whose first alarm already passed is still schedulable.
+///
+/// `spawn_async` computes the first alarm from the time the builder is called,
+/// so handing a task to the timer later than its delay must not panic.
+#[tokio::test]
+async fn test_add_task_with_past_alarm_timestamp() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(1)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    // Let the task's first alarm timestamp fall into the past before adding it.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    timer
+        .add_task(task)
+        .expect("A task with a passed alarm time should still be accepted");
+
+    assert!(timer.contains_task(1), "Task should be scheduled");
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    assert!(
+        counter.load(Ordering::SeqCst) >= 1,
+        "Stale task should run on the next tick, executed {} times",
+        counter.load(Ordering::SeqCst)
     );
 }
 

@@ -252,6 +252,17 @@ impl Clone for MiniTimer {
     }
 }
 
-unsafe impl Send for MiniTimer {}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-unsafe impl Sync for MiniTimer {}
+    /// Guards the auto-trait derivation of the shared timer types: if a field
+    /// ever stops being `Send`/`Sync` this fails to compile instead of being
+    /// silently papered over by a manual `unsafe impl`.
+    #[test]
+    fn timer_types_are_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<MiniTimer>();
+        assert_send_sync::<Timer>();
+    }
+}

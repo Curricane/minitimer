@@ -157,11 +157,15 @@ impl TaskBuilder {
     ///
     /// # Returns
     /// * `Ok(Task)` - If the task was successfully built
-    /// * `Err(TaskError)` - If there was an error building the task
+    /// * `Err(TaskError)` - If the frequency is not schedulable
     pub fn spawn_async<T: TaskRunner<Output = ()> + Send + Sync>(
         self,
         task_runner: T,
     ) -> Result<Task, TaskError> {
+        self.frequency
+            .validate()
+            .map_err(TaskError::InvalidFrequency)?;
+
         let frequency = self.frequency.into();
         Ok(Task {
             task_id: self.task_id,
@@ -189,6 +193,69 @@ pub(crate) struct TaskContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NoopTask;
+
+    #[async_trait::async_trait]
+    impl TaskRunner for NoopTask {
+        type Output = ();
+
+        async fn run(&self) -> Result<Self::Output, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_spawn_async_rejects_zero_interval() {
+        let mut builder = TaskBuilder::new(1);
+        let result = builder
+            .with_frequency_once_by_seconds(0)
+            .spawn_async(NoopTask);
+        assert!(matches!(result, Err(TaskError::InvalidFrequency(_))));
+
+        let mut builder = TaskBuilder::new(1);
+        let result = builder
+            .with_frequency_repeated_by_seconds(0)
+            .spawn_async(NoopTask);
+        assert!(matches!(result, Err(TaskError::InvalidFrequency(_))));
+
+        let mut builder = TaskBuilder::new(1);
+        let result = builder
+            .with_frequency_count_down_by_seconds(3, 0)
+            .spawn_async(NoopTask);
+        assert!(matches!(result, Err(TaskError::InvalidFrequency(_))));
+    }
+
+    #[test]
+    fn test_spawn_async_rejects_empty_countdown() {
+        let mut builder = TaskBuilder::new(1);
+        let result = builder
+            .with_frequency_count_down_by_seconds(0, 1)
+            .spawn_async(NoopTask);
+        assert!(matches!(result, Err(TaskError::InvalidFrequency(_))));
+    }
+
+    #[test]
+    fn test_spawn_async_accepts_valid_frequencies() {
+        assert!(
+            TaskBuilder::new(1)
+                .with_frequency_once_by_seconds(1)
+                .spawn_async(NoopTask)
+                .is_ok()
+        );
+        assert!(
+            TaskBuilder::new(2)
+                .with_frequency_repeated_by_seconds(30)
+                .spawn_async(NoopTask)
+                .is_ok()
+        );
+        assert!(
+            TaskBuilder::new(3)
+                .with_frequency_count_down_by_seconds(2, 5)
+                .spawn_async(NoopTask)
+                .is_ok()
+        );
+    }
 
     #[test]
     fn test_with_frequency_once_by_timestamp_seconds_valid() {
