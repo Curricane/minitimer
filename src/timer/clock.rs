@@ -12,8 +12,16 @@ pub(crate) struct Clock {
 
 impl Clock {
     /// Creates a new Clock that ticks every second.
+    ///
+    /// The first tick is due one period from now, not immediately: the wheel
+    /// hand is expected to advance in step with elapsed time, and tokio fires
+    /// the first tick of an interval started at `Instant::now()` right away,
+    /// which used to place every task one second early.
     pub(crate) fn new() -> Self {
-        let inner = interval_at(Instant::now(), Duration::from_secs(1));
+        let inner = interval_at(
+            Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
+        );
         Self { inner }
     }
 

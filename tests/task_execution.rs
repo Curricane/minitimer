@@ -27,13 +27,52 @@ async fn test_task_executes_once() {
 
     timer.add_task(task).unwrap();
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
 
     let count = counter.load(Ordering::SeqCst);
-    assert!(
-        count >= 1,
-        "Task should execute at least once, but executed {} times",
+    assert_eq!(
+        count, 1,
+        "Once task should execute exactly once, executed {} times",
         count
+    );
+    assert!(
+        !timer.contains_task(1),
+        "Once task should be removed after its single execution"
+    );
+    assert_eq!(timer.task_count(), 0, "No task should be left scheduled");
+}
+
+/// Test that a task is not fired before its delay has elapsed.
+///
+/// The wheel hand must advance in step with elapsed time: the first tick of
+/// the internal clock used to be delivered immediately, which made every task
+/// fire one second early.
+#[tokio::test]
+async fn test_delay_is_not_shortened() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(1)
+        .with_frequency_once_by_seconds(3)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        0,
+        "Task scheduled for 3 seconds must not run after 2.5 seconds"
+    );
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    assert!(
+        counter.load(Ordering::SeqCst) >= 1,
+        "Task scheduled for 3 seconds should have run after 4.5 seconds"
     );
 }
 
@@ -69,19 +108,54 @@ async fn test_countdown_task() {
     let timer = MiniTimer::new();
 
     let task = TaskBuilder::new(1)
-        .with_frequency_count_down_by_seconds(3, 1)
+        .with_frequency_count_down_by_seconds(2, 1)
         .spawn_async(CounterTask::new(counter.clone()))
         .unwrap();
 
     timer.add_task(task).unwrap();
 
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
 
     let count = counter.load(Ordering::SeqCst);
-    assert!(
-        (1..=4).contains(&count),
-        "Countdown task should execute limited times, executed {} times",
+    assert_eq!(
+        count, 2,
+        "Countdown task should execute exactly 2 times, executed {} times",
         count
+    );
+    assert!(
+        !timer.contains_task(1),
+        "Countdown task should be removed once it has run its executions"
+    );
+}
+
+/// Test that countdown executions are spaced by the configured interval.
+#[tokio::test]
+async fn test_countdown_uses_configured_interval() {
+    let counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    // 2 executions, 2 seconds apart
+    let task = TaskBuilder::new(1)
+        .with_frequency_count_down_by_seconds(2, 2)
+        .spawn_async(CounterTask::new(counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    // Only the first execution is due after 2.5 seconds
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        1,
+        "Countdown with a 2 second interval should have run once after 2.5 seconds"
+    );
+
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "Both countdown executions should have run after 4.5 seconds"
     );
 }
 
