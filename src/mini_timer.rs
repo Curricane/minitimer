@@ -36,7 +36,9 @@ struct Inner {
     /// a tick applied for somebody else cannot make it return early.
     applied_ticks: watch::Receiver<u64>,
     timer: Timer,
-    is_running: Arc<AtomicBool>,
+    /// Whether the timer is still expected to run. `Timer` has a flag of its
+    /// own for its tick source, which is a different thing.
+    is_running: AtomicBool,
     /// Wakes the event loop so it can wind down. `Drop` cannot await a channel
     /// send, and the event channel can be full.
     shutdown: Arc<Notify>,
@@ -103,7 +105,6 @@ impl MiniTimer {
 
         let wheel = Arc::new(MulitWheel::new());
         let timer = Timer::new(event_sender.clone());
-        let is_running = Arc::new(AtomicBool::new(true));
         let shutdown = Arc::new(Notify::new());
 
         let inner = Arc::new(Inner {
@@ -111,7 +112,7 @@ impl MiniTimer {
             event_sender,
             applied_ticks,
             timer,
-            is_running,
+            is_running: AtomicBool::new(true),
             shutdown: shutdown.clone(),
         });
 
@@ -171,11 +172,15 @@ impl MiniTimer {
 
     /// Advances the timer by one tick (one second).
     ///
-    /// Resolves once the tick has been applied, so the effect of the elapsed
-    /// second — including any task that became due — has been scheduled when
-    /// this returns. Use [`MiniTimer::new_manual`] to keep a timer from ticking
-    /// on its own, or [`MiniTimer::elapse`] to move it by more than a second.
-    /// A tick the timer applied on its own does not count for this.
+    /// Resolves once a tick has been applied after this call started, so the
+    /// effect of the elapsed second — including any task that became due — has
+    /// been scheduled when this returns. On a manual timer that is the tick this
+    /// call sent; a timer that ticks on its own can also release the wait with a
+    /// tick of its own. A stopped timer has no event loop left, so the call
+    /// returns without moving the clock.
+    ///
+    /// Use [`MiniTimer::new_manual`] to keep a timer from ticking on its own,
+    /// or [`MiniTimer::elapse`] to move it by more than a second.
     pub async fn tick(&self) {
         // The count is noted before the event is sent: a tick that was applied
         // earlier, for a caller that is not waiting, must not be mistaken for
@@ -343,7 +348,7 @@ impl MiniTimer {
     /// # Returns
     /// * `Ok(())` - If the task was successfully advanced
     /// * `Err(TaskError)` - If the task doesn't exist, or if the timer has been
-    ///   stopped
+    ///   stopped; a stopped timer is reported before a missing task
     pub fn advance_task(
         &self,
         task_id: TaskId,
@@ -371,7 +376,7 @@ impl MiniTimer {
     /// # Returns
     /// * `Ok(())` - If the task was successfully updated
     /// * `Err(TaskError)` - If the task doesn't exist, or if the timer has been
-    ///   stopped
+    ///   stopped; a stopped timer is reported before a missing task
     pub fn update_task(&self, task_id: TaskId, new_task: Task) -> Result<(), TaskError> {
         self.ensure_not_stopped()?;
 

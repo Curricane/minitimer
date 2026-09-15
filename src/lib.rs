@@ -48,9 +48,10 @@
 //! See the [README](https://github.com/Curricane/minitimer) for a full guide.
 //!
 //! A timer owns two spawned tasks — a tick source and the event loop that
-//! applies its ticks — and [`MiniTimer::stop`] as well as dropping the last
-//! handle to the timer shut both of them down, so a timer does not outlive the
-//! code that holds it.
+//! applies its ticks. [`MiniTimer::stop`] and dropping the last handle to the
+//! timer both shut them down; the event loop exits at once and the tick source
+//! at the latest when its second is up. Executions that are already in flight
+//! are not cancelled, which is what [`MiniTimer::wait_for_idle`] is for.
 
 pub mod error;
 pub(crate) mod mini_timer;

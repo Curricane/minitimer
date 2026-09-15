@@ -56,15 +56,16 @@ pub async fn wait_for_alive_tasks(baseline: usize) -> usize {
 
 /// Leaves a tick in the timer's event channel without waiting for it.
 ///
-/// The future is polled once, which sends the event, and then dropped: the tick
-/// is applied while nobody waits for it.
+/// The future is polled once and then dropped. The channel is empty when this
+/// is called, so that first poll is where the event is queued; the wait for the
+/// tick to be applied is what keeps the poll pending.
 pub fn send_tick_without_waiting(timer: &MiniTimer) {
     let mut tick = std::pin::pin!(timer.tick());
     let mut context = Context::from_waker(Waker::noop());
 
     assert!(
         tick.as_mut().poll(&mut context).is_pending(),
-        "polling once sends the tick and then waits for it to be applied"
+        "the wait for its own tick has to keep the first poll pending"
     );
 }
 

@@ -247,7 +247,8 @@ Tasks are distributed across these wheels based on their execution time. As the 
 - The wheel moves with ticks. A runtime that is not polled (a suspended process, a blocked executor) delays tasks until it is polled again
 - A task failure is logged through the `log` crate; it does not stop the timer or the task's remaining executions
 - A wall clock timer can be combined with `tick()`, but the drift-free timing guarantees only apply to `MiniTimer::new_manual`
-- `stop()` is final and does not wait for the event loop to exit; dropping the last handle stops the timer as well, so a timer never outlives the code that owns it. A stopped timer refuses tasks with `TaskError::TimerStopped` and ignores `tick()`, since there is no event loop left to apply it
+- `stop()` is final and does not wait for the event loop to exit; dropping the last handle stops the timer as well, so neither background task outlives it. The tick source notices at the latest when its second is up, and an execution that is already running is not cancelled — `wait_for_idle()` is how to wait for it
+- A stopped timer refuses new, replaced or advanced tasks with `TaskError::TimerStopped` and ignores `tick()`, since there is no event loop left to apply it
 
 ## Examples
 

@@ -189,7 +189,11 @@ async fn test_drop_of_every_clone_shuts_the_timer_down() {
     );
 }
 
-/// Test that a manual timer is released as well, which has no tick source.
+/// Test that a manual timer is released as well.
+///
+/// A manual timer has no tick source, so this guards the other half of the
+/// ownership rule: no spawned task may hold the `Arc<Inner>` itself, or the
+/// last handle could not release the event loop.
 #[tokio::test]
 async fn test_drop_without_stop_shuts_a_manual_timer_down() {
     let baseline = alive_tasks();
@@ -215,6 +219,9 @@ async fn test_drop_without_stop_shuts_a_manual_timer_down() {
 }
 
 /// Test that stopping a timer before dropping it stays leak free.
+///
+/// Stopping already releases the event loop on its own, so this guards the
+/// combination rather than the fix itself.
 #[tokio::test]
 async fn test_stop_then_drop_shuts_the_timer_down() {
     let baseline = alive_tasks();
