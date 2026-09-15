@@ -219,6 +219,51 @@ async fn test_update_task_task_executes_with_new_frequency() {
     );
 }
 
+/// Test that updating a task cancels the previously scheduled execution.
+#[tokio::test]
+async fn test_update_task_cancels_previous_schedule() {
+    let old_counter = Arc::new(AtomicU64::new(0));
+    let new_counter = Arc::new(AtomicU64::new(0));
+
+    let timer = MiniTimer::new();
+
+    let task = TaskBuilder::new(9)
+        .with_frequency_once_by_seconds(2)
+        .spawn_async(CounterTask::new(old_counter.clone()))
+        .unwrap();
+
+    timer.add_task(task).unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let new_task = TaskBuilder::new(9)
+        .with_frequency_once_by_seconds(5)
+        .spawn_async(CounterTask::new(new_counter.clone()))
+        .unwrap();
+
+    timer.update_task(9, new_task).unwrap();
+
+    // The old schedule was due after 2 seconds and must stay silent
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        old_counter.load(Ordering::SeqCst),
+        0,
+        "The replaced schedule must not execute"
+    );
+    assert_eq!(
+        timer.task_count(),
+        1,
+        "Only the updated task should be scheduled"
+    );
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert_eq!(
+        new_counter.load(Ordering::SeqCst),
+        1,
+        "The updated task should execute once"
+    );
+}
+
 #[tokio::test]
 async fn test_update_task_different_task_id_in_new_task() {
     let counter = Arc::new(AtomicU64::new(0));

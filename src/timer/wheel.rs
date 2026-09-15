@@ -584,6 +584,10 @@ impl MulitWheel {
     /// * `Ok(())` - If the task was successfully added
     /// * `Err(TaskError)` - If there was an error adding the task
     pub fn add_task(&self, mut task: Task) -> Result<(), TaskError> {
+        // A task id must not be scheduled twice: drop the previous placement so
+        // replacing a task cannot leave the old schedule running.
+        let _ = self.remove_task_from_wheel_only(task.task_id);
+
         let next_exec_timestamp = match task.next_alarm_timestamp() {
             Some(t) => t,
             None => return Ok(()),
@@ -860,6 +864,8 @@ impl MulitWheel {
     ///
     /// This replaces the existing task with a new one, preserving the task_id
     /// but using the new task's frequency, concurrency, and runner settings.
+    /// The previously scheduled execution is cancelled, so the old runner and
+    /// frequency cannot fire again.
     ///
     /// # Arguments
     /// * `task_id` - The unique identifier of the task to update
@@ -868,44 +874,22 @@ impl MulitWheel {
     /// # Returns
     /// * `Ok(())` - If the task was successfully updated
     /// * `Err(TaskError)` - If the task doesn't exist
-    pub fn update_task(&self, task_id: TaskId, mut new_task: Task) -> Result<(), TaskError> {
+    pub fn update_task(&self, task_id: TaskId, new_task: Task) -> Result<(), TaskError> {
         if !self.task_tracker_map.contains_key(&task_id) {
             return Err(TaskError::TaskNotFound(task_id));
         }
 
+        let mut new_task = new_task;
         new_task.task_id = task_id;
 
-        let next_alarm_sec = match new_task.frequency.peek_alarm_timestamp() {
-            Some(t) => t.saturating_sub(timestamp()),
-            None => {
-                let _ = self.remove_task(task_id);
-                return Ok(());
-            }
-        };
-
-        let next_guide = self.cal_next_hand_position(next_alarm_sec);
-        new_task.set_wheel_position(next_guide);
-
-        if let Some(mut tracking_info) = self.task_tracker_map.get_mut(&task_id) {
-            tracking_info.cascade_guide = next_guide;
-            tracking_info.max_concurrency = new_task.max_concurrency;
-
-            if let Some(hour) = next_guide.hour {
-                tracking_info.wheel_type = WheelType::Hour;
-                tracking_info.slot_num = hour;
-                self.hour_wheel.add_task(new_task.clone(), hour);
-            } else if let Some(min) = next_guide.min {
-                tracking_info.wheel_type = WheelType::Minute;
-                tracking_info.slot_num = min;
-                self.min_wheel.add_task(new_task.clone(), min);
-            } else {
-                tracking_info.wheel_type = WheelType::Second;
-                tracking_info.slot_num = next_guide.sec;
-                self.sec_wheel.add_task(new_task.clone(), next_guide.sec);
-            }
+        if new_task.frequency.peek_alarm_timestamp().is_none() {
+            let _ = self.remove_task(task_id);
+            return Ok(());
         }
 
-        Ok(())
+        // `add_task` drops the old placement of this id before scheduling the
+        // new one and keeps the tracking entry (and its running records) alive.
+        self.add_task(new_task)
     }
 }
 
