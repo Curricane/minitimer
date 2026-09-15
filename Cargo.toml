@@ -3,12 +3,14 @@ name = "minitimer"
 version = "0.1.7"
 authors = ["Curricane <curricane@163.com>"]
 edition = "2024"
+rust-version = "1.88"
 repository = "https://github.com/Curricane/minitimer"
 documentation = "https://docs.rs/minitimer"
 description = "A mini timer of delayed tasks. Only asynchronous tasks are possible on tokio runtime, and dynamic add/cancel/remove is supported."
 keywords = [ "scheduler", "timer", "delay", "tokio"]
 license = "Apache-2.0"
-categories = ["development-tools", "data-structures", "asynchronous", "data-structures", "accessibility"]
+categories = ["asynchronous", "concurrency", "data-structures", "development-tools"]
+readme = "README.md"
 
 
 [lib]

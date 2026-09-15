@@ -33,6 +33,9 @@ impl Timer {
 
     /// Checks if the timer is currently running.
     ///
+    /// The timer is armed from creation and reports `false` once `stop()` has
+    /// been called.
+    ///
     /// # Returns
     /// `true` if the timer is running, `false` otherwise.
     pub fn is_running(&self) -> bool {

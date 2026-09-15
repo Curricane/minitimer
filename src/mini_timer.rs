@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use async_channel::{Receiver, Sender, bounded};
+use async_channel::{Receiver, Sender, bounded, unbounded};
 
 use crate::error::TaskError;
 use crate::task::{Task, TaskId};
@@ -15,12 +16,15 @@ use crate::timer::{Timer, TimerEvent};
 pub struct MiniTimer {
     wheel: Arc<MulitWheel>,
     event_sender: Sender<TimerEvent>,
+    /// One notification per applied tick, so `tick` can wait for its effect.
+    tick_applied: Receiver<()>,
     timer: Timer,
     is_running: Arc<AtomicBool>,
 }
 
 impl MiniTimer {
-    /// Creates a new MiniTimer instance.
+    /// Creates a new MiniTimer that follows the wall clock, ticking once per
+    /// second.
     ///
     /// Requires a Tokio runtime, since the tick source and the event loop run
     /// as spawned tasks.
@@ -28,26 +32,54 @@ impl MiniTimer {
     /// # Returns
     /// A new MiniTimer with initialized components.
     pub fn new() -> Self {
+        Self::build(true)
+    }
+
+    /// Creates a new MiniTimer whose time only moves when it is told to.
+    ///
+    /// The timer never ticks on its own: time advances through [`MiniTimer::tick`]
+    /// and [`MiniTimer::elapse`]. Together with [`MiniTimer::wait_for_idle`] this
+    /// makes task scheduling testable without waiting for the clock.
+    ///
+    /// Requires a Tokio runtime for the event loop.
+    ///
+    /// # Returns
+    /// A new MiniTimer that is driven by hand.
+    pub fn new_manual() -> Self {
+        Self::build(false)
+    }
+
+    fn build(follow_wall_clock: bool) -> Self {
         let (event_sender, event_receiver) = bounded(16);
+        let (tick_applied_sender, tick_applied) = unbounded();
 
         let wheel = Arc::new(MulitWheel::new());
         let timer = Timer::new(event_sender.clone());
         let is_running = Arc::new(AtomicBool::new(true));
 
-        let mut ticker = timer.clone();
-        tokio::spawn(async move {
-            ticker.run().await;
-        });
+        if follow_wall_clock {
+            let mut ticker = timer.clone();
+            tokio::spawn(async move {
+                ticker.run().await;
+            });
+        }
 
         let loop_wheel = wheel.clone();
         let loop_running = is_running.clone();
         tokio::spawn(async move {
-            Self::event_loop(loop_wheel, event_receiver, loop_running).await;
+            Self::event_loop(
+                loop_wheel,
+                event_receiver,
+                tick_applied_sender,
+                loop_running,
+            )
+            .await;
         });
 
         Self {
             wheel,
             event_sender,
+            tick_applied,
             timer,
             is_running,
         }
@@ -61,6 +93,7 @@ impl MiniTimer {
     async fn event_loop(
         wheel: Arc<MulitWheel>,
         event_receiver: Receiver<TimerEvent>,
+        tick_applied: Sender<()>,
         is_running: Arc<AtomicBool>,
     ) {
         while let Ok(event) = event_receiver.recv().await {
@@ -72,6 +105,8 @@ impl MiniTimer {
                     for task in arrived_tasks {
                         wheel.process_arrived_task(task);
                     }
+
+                    let _ = tick_applied.try_send(());
                 }
                 TimerEvent::StopTimer => break,
             }
@@ -82,11 +117,52 @@ impl MiniTimer {
 
     /// Advances the timer by one tick (one second).
     ///
-    /// This is useful for testing purposes to simulate time progression
-    /// without waiting for the real clock.
-    /// Note: This requires start() to be called first to start the event loop.
+    /// Resolves once the tick has been applied, so the effect of the elapsed
+    /// second — including any task that became due — has been scheduled when
+    /// this returns. Use [`MiniTimer::new_manual`] to keep a timer from ticking
+    /// on its own, or [`MiniTimer::elapse`] to move it by more than a second.
     pub async fn tick(&self) {
-        let _ = self.event_sender.send(TimerEvent::Tick).await;
+        if self.event_sender.send(TimerEvent::Tick).await.is_err() {
+            // The event loop is gone, so there is nothing to wait for.
+            return;
+        }
+
+        let _ = self.tick_applied.recv().await;
+    }
+
+    /// Advances the timer by the given duration, one tick per second.
+    ///
+    /// The wheel moves in whole seconds, so a sub-second part of `duration` is
+    /// ignored.
+    ///
+    /// # Arguments
+    /// * `duration` - How far to move the timer
+    pub async fn elapse(&self, duration: Duration) {
+        for _ in 0..duration.as_secs() {
+            self.tick().await;
+        }
+    }
+
+    /// Waits until no task execution is in flight.
+    ///
+    /// Useful in tests to observe the result of the tasks a timer started, and
+    /// to wait for running tasks after [`MiniTimer::stop`]. Note that a
+    /// repeating task keeps starting new executions as time moves on, so this
+    /// is normally called with a timer that has been stopped.
+    pub async fn wait_for_idle(&self) {
+        loop {
+            let idle = self.wheel.idle_notified();
+            tokio::pin!(idle);
+            // Register interest first: a completion between the check below and
+            // the await would otherwise be missed.
+            idle.as_mut().enable();
+
+            if self.wheel.get_running_tasks().is_empty() {
+                return;
+            }
+
+            idle.await;
+        }
     }
 
     /// Adds a task to the timer system.
@@ -244,6 +320,7 @@ impl Clone for MiniTimer {
         Self {
             wheel: self.wheel.clone(),
             event_sender: self.event_sender.clone(),
+            tick_applied: self.tick_applied.clone(),
             timer: self.timer.clone(),
             is_running: self.is_running.clone(),
         }

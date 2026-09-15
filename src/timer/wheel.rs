@@ -5,6 +5,7 @@ use std::sync::{
 
 use dashmap::DashMap;
 use log::warn;
+use tokio::sync::Notify;
 
 use crate::{
     error::TaskError,
@@ -32,6 +33,10 @@ pub(crate) struct MulitWheel {
     hour_wheel: Wheel,
 
     pub(crate) task_tracker_map: Arc<DashMap<TaskId, TaskTrackingInfo>>,
+
+    /// Signalled whenever an execution finishes, so callers can wait for the
+    /// tasks a timer started.
+    idle_notify: Arc<Notify>,
 }
 
 impl MulitWheel {
@@ -42,7 +47,17 @@ impl MulitWheel {
             min_wheel: Wheel::new(60),
             hour_wheel: Wheel::new(24),
             task_tracker_map: Arc::new(DashMap::new()),
+            idle_notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// Resolves the next time an execution finishes.
+    ///
+    /// The returned future has to be awaited from the point where the caller
+    /// has checked that work is still running, otherwise the notification can
+    /// be missed.
+    pub(crate) fn idle_notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.idle_notify.notified()
     }
 
     /// Set the positions of all wheels for testing purposes
@@ -135,16 +150,17 @@ impl MulitWheel {
                     if let Err(err) = runner.run().await {
                         warn!("task {task_id} failed: {err}");
                     }
-                    wheel.complete_task(task_id, record_id);
+                    // Drop a finished task before reporting the execution as
+                    // complete, so waiting for idle means the task is gone.
                     if is_last_execution {
                         let _ = wheel.remove_task(task_id);
                     }
+                    wheel.complete_task(task_id, record_id);
                 });
             }
             None => {
-                if task.frequency.peek_alarm_timestamp().is_some() {
-                    let _ = self.add_task(task);
-                } else {
+                let mut skipped = task;
+                if !self.reschedule_task(&mut skipped) {
                     // The only remaining execution was skipped, so the task is done.
                     let _ = self.remove_task(task_id);
                 }
@@ -154,17 +170,22 @@ impl MulitWheel {
 
     /// Reschedules a task for its next execution.
     ///
-    /// This is called after a task completes execution to schedule its next run
-    /// based on its frequency settings.
-    ///
-    /// Returns `true` if the task was successfully rescheduled, `false` if it
-    /// has no execution left.
+    /// The next execution is placed one interval after the current time, which
+    /// keeps the cadence exact and independent of the wall clock: a timer whose
+    /// seconds are driven by hand moves its tasks just as one that follows the
+    /// clock. Returns `true` if the task was rescheduled, `false` if it has no
+    /// execution left.
     pub(crate) fn reschedule_task(&self, task: &mut Task) -> bool {
         if task.frequency.peek_alarm_timestamp().is_none() {
             return false;
         }
 
-        self.add_task(task.clone()).is_ok()
+        let interval = task.frequency.interval();
+        // Consume the alarm the cursor points at, the placement below stands in
+        // for it.
+        let _ = task.next_alarm_timestamp();
+
+        self.place_task(task.clone(), interval).is_ok()
     }
 
     /// Calculates the next wheel position for a task based on the time until its next execution.
@@ -394,6 +415,7 @@ impl Clone for MulitWheel {
             min_wheel: self.min_wheel.clone(),
             hour_wheel: self.hour_wheel.clone(),
             task_tracker_map: self.task_tracker_map.clone(),
+            idle_notify: self.idle_notify.clone(),
         }
     }
 }
@@ -602,6 +624,8 @@ impl MulitWheel {
         if let Some(tracker) = self.task_tracker_map.get(&task_id) {
             tracker.running_records.remove(&record_id);
         }
+
+        self.idle_notify.notify_waiters();
     }
 
     /// Adds a task to the wheel and initializes its tracking information.
@@ -629,7 +653,13 @@ impl MulitWheel {
         // timer, so the alarm can already have passed. Schedule it for the next
         // tick in that case instead of underflowing.
         let next_alarm_sec = next_exec_timestamp.saturating_sub(timestamp()).max(1);
-        let next_guide = self.cal_next_hand_position(next_alarm_sec);
+
+        self.place_task(task, next_alarm_sec)
+    }
+
+    /// Places a task on the wheel `delay_secs` from now and records where it went.
+    fn place_task(&self, mut task: Task, delay_secs: u64) -> Result<(), TaskError> {
+        let next_guide = self.cal_next_hand_position(delay_secs.max(1));
         task.cascade_guide = next_guide;
 
         let max_concurrency = task.max_concurrency;
