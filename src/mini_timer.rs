@@ -215,6 +215,18 @@ impl MiniTimer {
         }
     }
 
+    /// Rejects work that a stopped timer cannot carry out.
+    ///
+    /// Accepting it would silently do nothing: the event loop that applies
+    /// ticks is gone, so a task would never run.
+    fn ensure_not_stopped(&self) -> Result<(), TaskError> {
+        if self.inner.is_running.load(Ordering::Acquire) {
+            Ok(())
+        } else {
+            Err(TaskError::TimerStopped)
+        }
+    }
+
     /// Waits until no task execution is in flight.
     ///
     /// Useful in tests to observe the result of the tasks a timer started, and
@@ -244,8 +256,11 @@ impl MiniTimer {
     ///
     /// # Returns
     /// * `Ok(())` - If the task was successfully added
-    /// * `Err(TaskError)` - If there was an error adding the task
+    /// * `Err(TaskError)` - If there was an error adding the task, or if the
+    ///   timer has been stopped, in which case the task would never run
     pub fn add_task(&self, task: Task) -> Result<(), TaskError> {
+        self.ensure_not_stopped()?;
+
         self.inner.wheel.add_task(task)
     }
 
@@ -327,13 +342,16 @@ impl MiniTimer {
     ///
     /// # Returns
     /// * `Ok(())` - If the task was successfully advanced
-    /// * `Err(TaskError)` - If the task doesn't exist
+    /// * `Err(TaskError)` - If the task doesn't exist, or if the timer has been
+    ///   stopped
     pub fn advance_task(
         &self,
         task_id: TaskId,
         duration: Option<std::time::Duration>,
         reset_frequency: bool,
     ) -> Result<(), TaskError> {
+        self.ensure_not_stopped()?;
+
         let duration_secs = duration.map(|d| d.as_secs());
         self.inner
             .wheel
@@ -352,8 +370,11 @@ impl MiniTimer {
     ///
     /// # Returns
     /// * `Ok(())` - If the task was successfully updated
-    /// * `Err(TaskError)` - If the task doesn't exist
+    /// * `Err(TaskError)` - If the task doesn't exist, or if the timer has been
+    ///   stopped
     pub fn update_task(&self, task_id: TaskId, new_task: Task) -> Result<(), TaskError> {
+        self.ensure_not_stopped()?;
+
         self.inner.wheel.update_task(task_id, new_task)
     }
 
@@ -368,6 +389,11 @@ impl MiniTimer {
     /// the event loop is already applying can still land, and the loop task
     /// takes a moment to exit. Use [`MiniTimer::wait_for_idle`] to wait for the
     /// executions a tick started.
+    ///
+    /// New tasks are refused with [`TaskError::TimerStopped`] once the timer
+    /// has stopped. The state is read before the task is placed, so a task that
+    /// is added at the very moment another handle stops the timer can still be
+    /// accepted, and it will not run.
     pub async fn stop(&self) {
         if !self.inner.is_running.swap(false, Ordering::AcqRel) {
             return;

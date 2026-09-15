@@ -184,7 +184,8 @@ let running = timer.get_running_tasks();
 // Number of scheduled tasks
 let count = timer.task_count();
 
-// Stop the timer: the tick source and the event loop are shut down
+// Stop the timer: the tick source and the event loop are shut down, and new,
+// replaced or advanced tasks are refused with TaskError::TimerStopped
 timer.stop().await;
 ```
 
@@ -246,7 +247,7 @@ Tasks are distributed across these wheels based on their execution time. As the 
 - The wheel moves with ticks. A runtime that is not polled (a suspended process, a blocked executor) delays tasks until it is polled again
 - A task failure is logged through the `log` crate; it does not stop the timer or the task's remaining executions
 - A wall clock timer can be combined with `tick()`, but the drift-free timing guarantees only apply to `MiniTimer::new_manual`
-- `stop()` is final and does not wait for the event loop to exit; dropping the last handle stops the timer as well, so a timer never outlives the code that owns it
+- `stop()` is final and does not wait for the event loop to exit; dropping the last handle stops the timer as well, so a timer never outlives the code that owns it. A stopped timer refuses tasks with `TaskError::TimerStopped` and ignores `tick()`, since there is no event loop left to apply it
 
 ## Examples
 
